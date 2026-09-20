@@ -1,0 +1,6 @@
+{
+  "baseUrl": "https://ocx.goldfinches.ru",
+  "apiKey": "REPLACE_WITH_ADMIN_OR_DATA_KEY",
+  "range": "1d",
+  "logLimit": 8
+}
