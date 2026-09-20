@@ -1,0 +1,20 @@
+id = "nordz0r.ocx-stats"
+name = "OpenCodex Stats"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Live OpenCodex (ocx) usage stats: tokens, estimated cost, recent request latency"
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "show-stats"
+title = "Show OpenCodex stats"
+contexts = ["workspace"]
+command = ["node", "bin/ocx-stats.mjs", "show"]
+
+[[panes]]
+id = "stats"
+title = "OpenCodex stats"
+placement = "popup"
+width = "80%"
+height = 24
+command = ["node", "bin/ocx-stats.mjs", "watch"]
