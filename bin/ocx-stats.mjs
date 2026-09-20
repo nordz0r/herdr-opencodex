@@ -167,28 +167,44 @@ function rowDuration(row) {
 }
 
 async function fetchUsageRemote(cfg) {
-  const url = `${cfg.baseUrl}/api/usage?range=${encodeURIComponent(cfg.range)}`;
-  const r = await httpJson(url, cfg.apiKey);
-  if (!r.ok || !r.json) {
-    return {
-      ok: false,
-      error: `GET /api/usage → HTTP ${r.status}${r.text ? `: ${r.text}` : ""}`,
-    };
+  // Management API first (admin token). Data-plane keys often get 403 here —
+  // fall back to client-scoped GET /v1/usage which works with ocx_data_* keys.
+  const paths = [
+    `/api/usage?range=${encodeURIComponent(cfg.range)}`,
+    `/v1/usage?range=${encodeURIComponent(cfg.range)}`,
+    `/v1/usage`,
+  ];
+  const errors = [];
+  for (const path of paths) {
+    const r = await httpJson(`${cfg.baseUrl}${path}`, cfg.apiKey);
+    if (r.ok && r.json) {
+      return { ok: true, data: r.json, source: `remote${path.startsWith("/v1") ? "-v1" : "-api"}`, path };
+    }
+    errors.push(`${path}→${r.status}`);
   }
-  return { ok: true, data: r.json, source: "remote" };
+  return {
+    ok: false,
+    error: `usage HTTP failed (${errors.join(", ")}). Admin token needed for /api/*; data-plane keys use /v1/usage.`,
+  };
 }
 
 async function fetchLogsRemote(cfg) {
-  const url = `${cfg.baseUrl}/api/logs`;
-  const r = await httpJson(url, cfg.apiKey);
+  // Request logs are Management-only; data-plane keys typically cannot read them.
+  const r = await httpJson(`${cfg.baseUrl}/api/logs`, cfg.apiKey);
   if (!r.ok || !r.json) {
-    return { ok: false, rows: [], error: `GET /api/logs → HTTP ${r.status}` };
+    return {
+      ok: false,
+      rows: [],
+      error: r.status === 403 || r.status === 401
+        ? "logs need admin token (data-plane key cannot read /api/logs)"
+        : `GET /api/logs → HTTP ${r.status}`,
+    };
   }
   let rows = [];
   if (Array.isArray(r.json)) rows = r.json;
   else if (Array.isArray(r.json.logs)) rows = r.json.logs;
   else if (Array.isArray(r.json.items)) rows = r.json.items;
-  return { ok: true, rows: rows.slice(-cfg.logLimit), source: "remote" };
+  return { ok: true, rows: rows.slice(-cfg.logLimit), source: "remote-api" };
 }
 
 function fetchUsageLocal(range) {
@@ -294,7 +310,7 @@ async function snapshot() {
   if (remote) {
     usage = await fetchUsageRemote(cfg);
     logs = await fetchLogsRemote(cfg);
-    source = "remote";
+    source = usage.ok ? usage.source : "remote";
   } else {
     usage = fetchUsageLocal(cfg.range);
     logs = fetchLogsLocal(cfg.logLimit);
@@ -324,7 +340,7 @@ async function doctor() {
     ocxPath: path,
     remoteOk: null,
     localHealthOk: null,
-    note: "Cost figures are list-price estimates, not invoices. Prefer admin token for /api/usage.",
+    note: "Cost figures are list-price estimates, not invoices. Prefer admin token for /api/*; ocx_data_* keys work via /v1/usage.",
   };
 
   if (cfg.baseUrl && cfg.apiKey) {

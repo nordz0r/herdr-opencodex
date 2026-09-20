@@ -48,7 +48,7 @@ Create `config.json` there (see `config.example.json`):
 ```
 
 - `baseUrl` — remote OpenCodex origin (no trailing slash needed)
-- `apiKey` — sent as `X-OpenCodex-API-Key` and `Authorization: Bearer …` to Management API (`GET /api/usage`, `GET /api/logs`). Prefer the **admin** token for these routes; a data-plane key alone may get 401/403.
+- `apiKey` — sent as `X-OpenCodex-API-Key` and `Authorization: Bearer …`. An **admin** token unlocks Management `GET /api/usage` and `GET /api/logs`. A **data-plane** `ocx_data_*` key falls back to client-scoped `GET /v1/usage` (usage works; request logs stay empty without admin).
 - If `baseUrl` + `apiKey` are set, the plugin talks HTTP and does **not** need a local `ocx` binary.
 - If they are absent, it falls back to `ocx usage --json` / `ocx logs` on `PATH`.
 
