@@ -6,24 +6,58 @@ This is a **Herdr plugin** (`herdr-plugin.toml`), not the Herdr agent skill. Ins
 
 ## Install
 
+From GitHub (preferred):
+
 ```bash
-herdr plugin install nordz0r/herdr-opencodex
+herdr plugin install nordz0r/herdr-opencodex --yes
+herdr plugin list
 ```
 
-Local development:
+Local development — use a **real checkout path**, not a placeholder:
 
 ```bash
-herdr plugin link /path/to/herdr-opencodex
+git clone https://github.com/nordz0r/herdr-opencodex.git
+cd herdr-opencodex
+herdr plugin link "$(pwd)"
 herdr plugin action invoke nordz0r.ocx-stats.show-stats
 herdr plugin pane open --plugin nordz0r.ocx-stats --entrypoint stats
 ```
 
-Requires: Node.js on `PATH`, and a working `ocx` install (proxy healthy for live numbers).
+If you already have a clone elsewhere, point `herdr plugin link` at that directory (the one that contains `herdr-plugin.toml`).
+
+Requires: Node.js on `PATH`. Local `ocx` is **optional** when you set a remote server in plugin config.
+
+## Plugin config
+
+Config lives under Herdr’s plugin config dir (not in the repo):
+
+```bash
+herdr plugin config-dir nordz0r.ocx-stats
+# → …/herdr/plugins/config/nordz0r.ocx-stats
+```
+
+Create `config.json` there (see `config.example.json`):
+
+```json
+{
+  "baseUrl": "https://ocx.example.com",
+  "apiKey": "ocx_admin_… or data-plane key",
+  "range": "1d",
+  "logLimit": 8
+}
+```
+
+- `baseUrl` — remote OpenCodex origin (no trailing slash needed)
+- `apiKey` — sent as `X-OpenCodex-API-Key` and `Authorization: Bearer …` to Management API (`GET /api/usage`, `GET /api/logs`). Prefer the **admin** token for these routes; a data-plane key alone may get 401/403.
+- If `baseUrl` + `apiKey` are set, the plugin talks HTTP and does **not** need a local `ocx` binary.
+- If they are absent, it falls back to `ocx usage --json` / `ocx logs` on `PATH`.
+
+Never commit real keys. The plugin never prints the key.
 
 ## What it shows
 
 | Metric | Source | Notes |
-|--------|--------|--------|
+|--------|--------|-------|
 | Tokens in / out / total | `ocx usage --json` | Aggregates by range |
 | Estimated cost (USD) | same | **List-price estimate** from display pricing — not a provider invoice |
 | Coverage | same | Usage coverage ratio when present |
