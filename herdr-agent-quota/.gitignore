@@ -1,0 +1,16 @@
+/target/
+*.swp
+.DS_Store
+.env
+.env.*
+!.env.example
+.herdr-agent-quota/
+.herdr-state/
+
+# Local agent state and implementation plans
+/.agents/
+/.claude/
+/.codex/
+/.longgraph/
+/.devin/
+PLAN.md

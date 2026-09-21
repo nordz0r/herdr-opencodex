@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Claude marker">
+  <rect width="64" height="64" rx="14" fill="#111827"/>
+  <path d="m32 10 4.7 14.9L52 28l-15.3 4.4L32 48l-4.7-15.6L12 28l15.3-3.1z" fill="#e9b45f"/>
+  <path d="m32 18 2.7 8.2 8.3 1.8-8.3 2.4L32 39l-2.7-8.6-8.3-2.4 8.3-1.8z" fill="#fff5df"/>
+</svg>

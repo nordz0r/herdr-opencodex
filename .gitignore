@@ -4,3 +4,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+/herdr-agent-quota/.github/
+/herdr-agent-quota/docs/research/
+/herdr-agent-quota/AGENTS.md
+/herdr-agent-quota/CLAUDE.md

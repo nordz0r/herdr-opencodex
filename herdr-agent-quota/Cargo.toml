@@ -1,0 +1,48 @@
+[package]
+name = "herdr-agent-quota"
+version = "1.6.0"
+edition = "2021"
+rust-version = "1.95"
+description = "Credential-scoped AI quota and context in Herdr, including OpenCodex hub remaining for omp"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/nordz0r/herdr-opencodex"
+homepage = "https://herdr.dev/plugins/"
+keywords = ["herdr", "opencodex", "omp", "quota", "usage"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["docs/screenshots/*", "docs/research/*", ".github/*", ".devin/*"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+directories = "5.0"
+serde = { version = "1.0", features = ["derive"] }
+# omp records the account serving a session as a sha256 of its identity; the
+# same digest is recomputed here to match a pane to one account's quota.
+sha2 = "0.10"
+# `preserve_order` keeps a user's own key order when `configure` rewrites
+# ~/.claude/settings.json; without it every apply silently re-sorts their file.
+serde_json = { version = "1.0", features = ["preserve_order"] }
+thiserror = "2.0"
+time = { version = "0.3", features = ["parsing"] }
+# Read-only deserialization of Devin CLI's credentials.toml. toml_edit is for
+# rewriting Herdr config; this is for parsing a simple key-value credential file.
+toml = "0.8"
+toml_edit = "0.22"
+ureq = { version = "2.12", features = ["json"] }
+# Bundled SQLite so macOS/Linux CI does not need libsqlite3 or a sqlite3 binary.
+# Used for exact session-id lookups in OpenCode's local opencode.db, omp's
+# models.db, and Devin CLI's sessions.db.
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+
+# Only used to put the Codex app-server in its own process group.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[[bin]]
+name = "herdr-agent-quota"
+path = "src/main.rs"

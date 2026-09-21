@@ -1,39 +1,41 @@
-# OpenCodex Stats (Herdr plugin)
+# herdr-opencodex
 
-Herdr marketplace plugin that shows **OpenCodex (`ocx`) usage stats** while you work: tokens, estimated list-price cost, and recent request durations.
+Herdr plugins for [OpenCodex](https://github.com/lidge-jun/opencodex) (`ocx`):
 
-This is a **Herdr plugin** (`herdr-plugin.toml`), not the Herdr agent skill. Install it into Herdr; it talks to your local `ocx` CLI / proxy.
+| Plugin | Install | What it shows |
+| --- | --- | --- |
+| `nordz0r.ocx-stats` | `herdr plugin install nordz0r/herdr-opencodex --yes` | Popup spend: tokens in/out, list-price USD, optional request logs |
+| `nordz0r.agent-quota` | `herdr plugin install nordz0r/herdr-opencodex/herdr-agent-quota --yes` | Agents sidebar: model, context, remaining 5h/7d (including remote hub remaining for omp API-key panes) |
 
-## Install
+This is a **Herdr plugin** repo (`herdr-plugin.toml` at the root and in `herdr-agent-quota/`), not an omp skill. Plugins run as your user; review the manifests before install.
 
-From GitHub (preferred):
+## Marketplace
+
+Public repo + GitHub topic `herdr-plugin`. The [Herdr marketplace](https://herdr.dev/plugins/) indexes default-branch manifests every 30 minutes. Install by GitHub path:
 
 ```bash
 herdr plugin install nordz0r/herdr-opencodex --yes
+herdr plugin install nordz0r/herdr-opencodex/herdr-agent-quota --yes
 herdr plugin list
 ```
 
-Local development — use a **real checkout path**, not a placeholder:
+Local development:
 
 ```bash
 git clone https://github.com/nordz0r/herdr-opencodex.git
 cd herdr-opencodex
 herdr plugin link "$(pwd)"
-herdr plugin action invoke nordz0r.ocx-stats.show-stats
-herdr plugin pane open --plugin nordz0r.ocx-stats --entrypoint stats
+herdr plugin link "$(pwd)/herdr-agent-quota"
 ```
 
-If you already have a clone elsewhere, point `herdr plugin link` at that directory (the one that contains `herdr-plugin.toml`).
+Requires Node.js on `PATH` for stats. Quota plugin needs the Rust toolchain in `herdr-agent-quota/rust-toolchain.toml` (Herdr runs `cargo build --release` on GitHub install).
 
-Requires: Node.js on `PATH`. Local `ocx` is **optional** when you set a remote server in plugin config.
-
-## Plugin config
+## OpenCodex Stats (`nordz0r.ocx-stats`)
 
 Config lives under Herdr’s plugin config dir (not in the repo):
 
 ```bash
 herdr plugin config-dir nordz0r.ocx-stats
-# → …/herdr/plugins/config/nordz0r.ocx-stats
 ```
 
 Create `config.json` there (see `config.example.json`):
@@ -41,50 +43,48 @@ Create `config.json` there (see `config.example.json`):
 ```json
 {
   "baseUrl": "https://ocx.example.com",
-  "apiKey": "ocx_admin_… or data-plane key",
+  "apiKey": "ocx_data_… or admin token",
   "range": "1d",
   "logLimit": 8
 }
 ```
 
-- `baseUrl` — remote OpenCodex origin (no trailing slash needed)
-- `apiKey` — sent as `X-OpenCodex-API-Key` and `Authorization: Bearer …`. An **admin** token unlocks Management `GET /api/usage` and `GET /api/logs`. A **data-plane** `ocx_data_*` key falls back to client-scoped `GET /v1/usage` (usage works; request logs stay empty without admin).
+- `baseUrl` — remote OpenCodex origin (no trailing slash needed).
+- `apiKey` — sent as `X-OpenCodex-API-Key` and `Authorization: Bearer …`. A **data-plane** `ocx_data_*` key is enough for `GET /v1/usage` (tokens). Request logs need a management/admin key on `GET /api/logs`.
 - If `baseUrl` + `apiKey` are set, the plugin talks HTTP and does **not** need a local `ocx` binary.
 - If they are absent, it falls back to `ocx usage --json` / `ocx logs` on `PATH`.
 
 Never commit real keys. The plugin never prints the key.
 
-## What it shows
-
 | Metric | Source | Notes |
-|--------|--------|-------|
-| Tokens in / out / total | `ocx usage --json` | Aggregates by range |
-| Estimated cost (USD) | same | **List-price estimate** from display pricing — not a provider invoice |
-| Coverage | same | Usage coverage ratio when present |
-| Recent durations | `ocx logs --json` (optional) | Last N requests when available |
+| --- | --- | --- |
+| Tokens in / out / total | `GET /v1/usage` or `ocx usage --json` | Aggregates by range |
+| Estimated cost (USD) | same | **List-price estimate** — not a provider invoice |
+| Recent durations | `GET /api/logs` (optional) | Empty without a management key |
 
-**Not in v0.1:** tool-call counts as a first-class metric (not stable in ocx usage aggregates), always-on statusline, scraping agent pane text.
+`bin/ocx-stats.mjs`: `doctor`, `show`, `watch`. State under `HERDR_PLUGIN_STATE_DIR`.
 
-## Commands
+## Agent Quota with hub remaining (`nordz0r.agent-quota`)
 
-`bin/ocx-stats.mjs`:
+Based on [levi-qiao/herdr-agent-quota](https://github.com/levi-qiao/herdr-agent-quota) (MIT). Extra collector: when `omp usage --json` is empty for an OCX API-key pane, remaining 5h/7d is read from hub management `GET /api/provider-quotas`.
 
-- `doctor` — check `ocx` on PATH + `ocx health`; write `HERDR_PLUGIN_STATE_DIR/doctor.json`
-- `show` — one-shot formatted snapshot (action)
-- `watch` — refresh loop for the stats pane
+That endpoint rejects data-plane keys (401). Put the hub **admin** token in `~/.opencodex/hub-admin-api-token` (mode 0600) and point the plugin at it:
 
-State goes under `HERDR_PLUGIN_STATE_DIR` (e.g. `last-usage.json`). Optional config under `HERDR_PLUGIN_CONFIG_DIR` — never store secrets in the plugin root.
+```bash
+CFG="$(herdr plugin config-dir nordz0r.agent-quota)"
+printf '%s\n' 'https://ocx.goldfinches.ru' > "$CFG/ocx-hub-url"
+printf '%s\n' "$HOME/.opencodex/hub-admin-api-token" > "$CFG/ocx-hub-admin-token-file"
+herdr plugin action invoke nordz0r.agent-quota.refresh
+```
 
-## Marketplace
+Pane models map to hub reports: `grok*` → xAI (weekly only), `gpt*`/`codex` → OpenAI (5h+7d), `glm`/`zai` → Zai, `gemini*` → Google Antigravity (`customWindows` Gem / Gem Weekly). Cache keys are `ocx/{family}` so those panes do not share one snapshot.
 
-Add the GitHub topic `herdr-plugin` on this public repo so it appears in the Herdr marketplace index.
+Full settings, layouts, and other collectors: [herdr-agent-quota/README.md](herdr-agent-quota/README.md).
 
 ## Trust
 
-Plugins run as your user with full shell and Herdr CLI access. Review `herdr-plugin.toml` and `bin/ocx-stats.mjs` before install.
+Plugins run as your user with full shell and Herdr CLI access. Review `herdr-plugin.toml`, `bin/ocx-stats.mjs`, and `herdr-agent-quota/` before install.
 
-## Roadmap
+## License
 
-1. Popup + action (this scaffold)
-2. Split/tab dashboard beside the agent pane
-3. Optional threshold notifications via `herdr notification show`
+MIT. Quota plugin retains the original Levi Qiao MIT notice plus this distribution’s remaining-quota changes.

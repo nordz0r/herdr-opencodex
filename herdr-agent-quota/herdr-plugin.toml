@@ -1,0 +1,65 @@
+id = "nordz0r.agent-quota"
+name = "Herdr Agent Quota (OCX hub remaining)"
+version = "1.6.0"
+min_herdr_version = "0.9.0"
+description = "Credential-scoped AI quota in Herdr, with OpenCodex hub remaining 5h/7d for omp API-key panes."
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+[[startup]]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" startup --provider all"]
+
+[[actions]]
+id = "refresh"
+title = "Refresh agent quota"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" refresh --provider all --force"]
+
+[[actions]]
+id = "configure"
+title = "Install / repair agent quota"
+command = ["sh", "-c", "\"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" configure --apply && herdr server reload-config && exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" startup --provider all"]
+
+[[actions]]
+id = "open-settings"
+title = "Open agent quota settings"
+command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin nordz0r.agent-quota --entrypoint settings --focus"]
+
+[[actions]]
+id = "uninstall"
+title = "Uninstall agent quota configuration"
+command = ["sh", "-c", "\"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" configure --uninstall && herdr server reload-config"]
+
+[[events]]
+id = "agent-quota-refresh"
+on = "pane.agent_detected"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" event"]
+
+[[events]]
+id = "agent-quota-status-refresh"
+on = "pane.agent_status_changed"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" event"]
+
+[[events]]
+id = "focused-agent-quota-refresh"
+on = "pane.focused"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" focus"]
+
+[[panes]]
+id = "dashboard"
+title = "Agent quota"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" dashboard"]
+placement = "popup"
+
+[[panes]]
+id = "settings"
+title = "Agent quota settings"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-agent-quota\" settings"]
+placement = "popup"
+# Every option on screen at once. The default half-size popup is 24 rows and
+# the list plus controls needs 28 interior rows, so without this the agents
+# section opens below the fold.
+# Herdr clamps to the terminal, and the pane still scrolls when it has to.
+width = 78
+height = 31

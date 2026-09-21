@@ -2,7 +2,7 @@ id = "nordz0r.ocx-stats"
 name = "OpenCodex Stats"
 version = "0.1.2"
 min_herdr_version = "0.7.0"
-description = "Live OpenCodex (ocx) usage stats: tokens, estimated cost, recent request latency"
+description = "OpenCodex spend: tokens, list-price cost, recent request latency. Remaining 5h/7d is nordz0r.agent-quota."
 platforms = ["linux", "macos", "windows"]
 
 [[actions]]
