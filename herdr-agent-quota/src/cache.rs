@@ -916,7 +916,12 @@ fn merge_session_windows(
     if snapshot.session_quota_only {
         let previous = previous.filter(|previous| previous.session_quota_only);
         if let Some(previous) = previous {
-            snapshot.session_windows = previous.session_windows.clone();
+            for (id, windows) in &previous.session_windows {
+                let current_empty = snapshot.session_windows.get(id).map(Vec::is_empty).unwrap_or(true);
+                if current_empty && !windows.is_empty() {
+                    snapshot.session_windows.insert(id.clone(), windows.clone());
+                }
+            }
         }
         if let Some(id) = session_id {
             // A statusLine tick that omits `five_hour` is not a report that the

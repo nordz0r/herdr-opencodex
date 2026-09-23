@@ -83,18 +83,11 @@ pub fn fetch(
     Ok(usage)
 }
 
-/// Remaining 5h/7d for an omp pane on a remote OpenCodex hub.
+/// Remaining 5h/7d for an agent pane on a remote OpenCodex hub.
 ///
-/// `omp usage` is empty for OCX API-key auth. Hub remaining is management
-/// `GET /api/provider-quotas`, not data-plane `/v1/usage`. Token is never logged.
-fn fetch_ocx_hub_usage(
-    provider_id: &str,
-    model_id: Option<&str>,
-    now_unix: u64,
-) -> Option<ProviderUsage> {
-    if !ocx_hub_provider(provider_id) {
-        return None;
-    }
+/// Hub remaining is management `GET /api/provider-quotas`, not data-plane `/v1/usage`.
+/// Token is never logged.
+pub fn fetch_ocx_hub_payload() -> Option<Value> {
     let (base_url, token) = ocx_hub_credentials()?;
     let url = format!("{}/api/provider-quotas", base_url.trim_end_matches('/'));
     let response = ureq::get(&url)
@@ -107,7 +100,18 @@ fn fetch_ocx_hub_usage(
     if response.status() != 200 {
         return None;
     }
-    let value: Value = response.into_json().ok()?;
+    response.into_json().ok()
+}
+
+pub fn fetch_ocx_hub_usage(
+    provider_id: &str,
+    model_id: Option<&str>,
+    now_unix: u64,
+) -> Option<ProviderUsage> {
+    if !ocx_hub_provider(provider_id) {
+        return None;
+    }
+    let value = fetch_ocx_hub_payload()?;
     parse_ocx_hub_quotas(&value, provider_id, model_id, now_unix)
 }
 
@@ -142,7 +146,17 @@ fn ocx_hub_token_path() -> Option<PathBuf> {
 }
 
 fn read_pref_line(name: &str) -> Option<String> {
-    let directory = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR").map(PathBuf::from)?;
+    let directory = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let home = directories::BaseDirs::new()?.home_dir().to_path_buf();
+            let p1 = home.join(".config/herdr/plugins/config/nordz0r.agent-quota");
+            if p1.is_dir() {
+                Some(p1)
+            } else {
+                Some(home.join(".config/herdr/plugins/config/herdr-agent-quota"))
+            }
+        })?;
     read_secret_file(&directory.join(name))
 }
 
@@ -168,13 +182,33 @@ pub fn hub_quota_provider_name(provider_id: &str, model_id: Option<&str>) -> &'s
     if haystack.contains("zai") || haystack.contains("glm") || haystack.contains("gldf") {
         return "zai";
     }
+    // Explicit antigravity / Gemini ids.
     if haystack.contains("antigravity") || haystack.contains("gemini") {
+        return "google-antigravity";
+    }
+    let claude_family = haystack.contains("claude") || cla_family_token(&haystack);
+    // Claude-family + combo/flash still bills through antigravity custom (cla) windows.
+    // Do not let a bare "flash" substring alone classify claude-* as gem.
+    if claude_family
+        && (haystack.contains("flash")
+            || haystack.contains("combo")
+            || haystack.contains("antigravity"))
+    {
+        return "google-antigravity";
+    }
+    // Flash display routing (e.g. "flash (combo)"), not claude-* ids.
+    if haystack.contains("flash") && !claude_family {
         return "google-antigravity";
     }
     "xai"
 }
 
-fn parse_ocx_hub_quotas(
+fn cla_family_token(haystack: &str) -> bool {
+    // Match path/id segments like "/cla", "cla-", "-cla", not the letters inside "claude".
+    haystack.split(|c: char| !c.is_ascii_alphanumeric()).any(|part| part == "cla")
+}
+
+pub fn parse_ocx_hub_quotas(
     value: &Value,
     provider_id: &str,
     model_id: Option<&str>,
@@ -275,8 +309,11 @@ fn custom_windows(quota: &Value, model_id: Option<&str>) -> Vec<UsageWindow> {
 
 fn antigravity_family(model_id: Option<&str>) -> &'static str {
     let model = model_id.unwrap_or("").to_ascii_lowercase();
-    if model.contains("claude") || model.contains("cla") {
+    // Claude/cla must win over a "flash" substring in ids like claude-ocx-combo--flash.
+    if model.contains("claude") || cla_family_token(&model) {
         "cla"
+    } else if model.contains("gemini") || model.contains("gem") || model.contains("flash") {
+        "gem"
     } else {
         "gem"
     }
@@ -943,5 +980,42 @@ mod tests {
             .find(|window| window.kind == WindowKind::Weekly)
             .expect("7d");
         assert_eq!(weekly.used_percent, 80.0);
+    }
+
+    #[test]
+    fn claude_ocx_combo_flash_uses_cla_bucket_not_gem() {
+        let value = json!({
+            "reports": [{
+                "provider": "google-antigravity",
+                "quota": {
+                    "customWindows": [
+                        {"label": "Gem", "percent": 0.0, "resetAt": 1_790_038_030_000u64},
+                        {"label": "Gem (Weekly)", "percent": 1.99, "resetAt": 1_790_253_601_000u64},
+                        {"label": "Cla", "percent": 40.0, "resetAt": 1_790_038_030_000u64},
+                        {"label": "Cla (Weekly)", "percent": 80.0, "resetAt": 1_790_624_830_000u64}
+                    ]
+                }
+            }]
+        });
+        assert_eq!(
+            hub_quota_provider_name("ocx", Some("claude-ocx-combo--flash")),
+            "google-antigravity"
+        );
+        assert_eq!(antigravity_family(Some("claude-ocx-combo--flash")), "cla");
+        assert_eq!(antigravity_family(Some("flash (combo)")), "gem");
+        let usage = parse_ocx_hub_quotas(&value, "ocx", Some("claude-ocx-combo--flash"), 0)
+            .expect("cla windows");
+        let weekly = usage.accounts[0]
+            .windows
+            .iter()
+            .find(|window| window.kind == WindowKind::Weekly)
+            .expect("7d");
+        assert_eq!(weekly.used_percent, 80.0, "claude-*flash must select Cla, not Gem");
+        let short = usage.accounts[0]
+            .windows
+            .iter()
+            .find(|window| window.kind == WindowKind::FiveHour)
+            .expect("5h");
+        assert_eq!(short.used_percent, 40.0);
     }
 }
