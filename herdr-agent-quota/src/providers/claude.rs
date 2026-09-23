@@ -30,17 +30,8 @@ pub fn parse_statusline(
             windows.push(window);
         }
     }
-    if windows.is_empty() && is_ocx_session(value) {
-        if let Some(usage) = crate::providers::omp::fetch_ocx_hub_usage(
-            "ocx",
-            model.as_deref(),
-            fetched_at_unix,
-        ) {
-            if let Some(account) = usage.accounts.into_iter().next() {
-                windows = account.windows;
-            }
-        }
-    }
+    // Hub I/O stays on the refresh/cache path. Statusline ticks must stay
+    // hermetic and non-blocking; empty windows here let refresh fill session_windows.
     Ok(
         ProviderSnapshot::new(Provider::Claude, windows, fetched_at_unix)
             .session_local()
@@ -49,7 +40,60 @@ pub fn parse_statusline(
     )
 }
 
+/// Whether text names an OCX-routed model/session.
+///
+/// Bare English words like `native` or `combo` alone are too broad and cause
+/// false hub lookups. Prefer an `ocx` token, parenthesized routing markers
+/// (`(combo)` / `(native)`), or hyphenated OCX routing forms.
+pub fn is_ocx_routing_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("ocx") {
+        return true;
+    }
+    // Structured OpenCodex display markers, e.g. "flash (combo)", "gpt-6-luna (native)".
+    if lower.contains("(combo)") || lower.contains("(native)") {
+        return true;
+    }
+    // Double-hyphen OCX routing forms (e.g. claude-*-combo--flash), not "-combination".
+    lower.contains("combo--")
+        || lower.contains("native--")
+        || lower.contains("--combo")
+        || lower.contains("--native")
+}
+
+fn statusline_hub_routed(value: &Value) -> bool {
+    const KEYS: &[&str] = &[
+        "anthropic_base_url",
+        "anthropicBaseUrl",
+        "ANTHROPIC_BASE_URL",
+        "base_url",
+        "baseUrl",
+    ];
+    for key in KEYS {
+        if let Some(url) = value.get(*key).and_then(Value::as_str) {
+            let lower = url.to_ascii_lowercase();
+            if lower.contains("ocx") || lower.contains("opencodex") {
+                return true;
+            }
+        }
+    }
+    if let Some(env) = value.get("env").or_else(|| value.get("environment")) {
+        for key in KEYS {
+            if let Some(url) = env.get(*key).and_then(Value::as_str) {
+                let lower = url.to_ascii_lowercase();
+                if lower.contains("ocx") || lower.contains("opencodex") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub fn is_ocx_session(value: &Value) -> bool {
+    if statusline_hub_routed(value) {
+        return true;
+    }
     let Some(model) = value.get("model") else {
         return false;
     };
@@ -59,8 +103,7 @@ pub fn is_ocx_session(value: &Value) -> bool {
         .or_else(|| model.get("displayName"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    let lower = format!("{}/{}", id.to_ascii_lowercase(), display_name.to_ascii_lowercase());
-    lower.contains("ocx") || lower.contains("native") || lower.contains("combo")
+    is_ocx_routing_text(&format!("{id}/{display_name}"))
 }
 
 fn parse_window(
@@ -337,13 +380,38 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_statusline_ocx_flash() {
+    fn ocx_statusline_stays_hermetic_without_hub_windows() {
         let value = json!({
             "model": {"id": "claude-ocx-combo--flash", "display_name": "flash (combo)"},
             "context_window": {"used_percentage": 12.0}
         });
+        assert!(is_ocx_session(&value));
         let snapshot = parse_statusline(&value, 1).unwrap();
-        assert!(!snapshot.windows.is_empty());
+        // No sync hub I/O in parse_statusline: empty windows; refresh fills them.
+        assert!(snapshot.windows.is_empty());
+        assert_eq!(
+            snapshot.context.as_ref().map(|context| context.used_percent),
+            Some(12.0)
+        );
+    }
+
+    #[test]
+    fn ocx_routing_markers_reject_bare_native_or_combo_words() {
+        assert!(is_ocx_routing_text("claude-ocx-combo--flash"));
+        assert!(is_ocx_routing_text("flash (combo)"));
+        assert!(is_ocx_routing_text("gpt-6-luna (native)"));
+        assert!(!is_ocx_routing_text("Sonnet"));
+        assert!(!is_ocx_routing_text("native speaker model"));
+        assert!(!is_ocx_routing_text("combination pack"));
+    }
+
+    #[test]
+    fn ocx_session_detects_hub_routed_base_url() {
+        let value = json!({
+            "model": {"id": "claude-sonnet-4", "display_name": "Sonnet"},
+            "anthropic_base_url": "https://ocx.example/v1"
+        });
+        assert!(is_ocx_session(&value));
     }
 
     #[test]

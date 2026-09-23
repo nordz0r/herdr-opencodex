@@ -182,10 +182,30 @@ pub fn hub_quota_provider_name(provider_id: &str, model_id: Option<&str>) -> &'s
     if haystack.contains("zai") || haystack.contains("glm") || haystack.contains("gldf") {
         return "zai";
     }
-    if haystack.contains("antigravity") || haystack.contains("gemini") || haystack.contains("flash") {
+    // Explicit antigravity / Gemini ids.
+    if haystack.contains("antigravity") || haystack.contains("gemini") {
+        return "google-antigravity";
+    }
+    let claude_family = haystack.contains("claude") || cla_family_token(&haystack);
+    // Claude-family + combo/flash still bills through antigravity custom (cla) windows.
+    // Do not let a bare "flash" substring alone classify claude-* as gem.
+    if claude_family
+        && (haystack.contains("flash")
+            || haystack.contains("combo")
+            || haystack.contains("antigravity"))
+    {
+        return "google-antigravity";
+    }
+    // Flash display routing (e.g. "flash (combo)"), not claude-* ids.
+    if haystack.contains("flash") && !claude_family {
         return "google-antigravity";
     }
     "xai"
+}
+
+fn cla_family_token(haystack: &str) -> bool {
+    // Match path/id segments like "/cla", "cla-", "-cla", not the letters inside "claude".
+    haystack.split(|c: char| !c.is_ascii_alphanumeric()).any(|part| part == "cla")
 }
 
 pub fn parse_ocx_hub_quotas(
@@ -289,10 +309,11 @@ fn custom_windows(quota: &Value, model_id: Option<&str>) -> Vec<UsageWindow> {
 
 fn antigravity_family(model_id: Option<&str>) -> &'static str {
     let model = model_id.unwrap_or("").to_ascii_lowercase();
-    if model.contains("gemini") || model.contains("gem") || model.contains("flash") {
-        "gem"
-    } else if model.contains("claude") || model.contains("cla") {
+    // Claude/cla must win over a "flash" substring in ids like claude-ocx-combo--flash.
+    if model.contains("claude") || cla_family_token(&model) {
         "cla"
+    } else if model.contains("gemini") || model.contains("gem") || model.contains("flash") {
+        "gem"
     } else {
         "gem"
     }
@@ -959,5 +980,42 @@ mod tests {
             .find(|window| window.kind == WindowKind::Weekly)
             .expect("7d");
         assert_eq!(weekly.used_percent, 80.0);
+    }
+
+    #[test]
+    fn claude_ocx_combo_flash_uses_cla_bucket_not_gem() {
+        let value = json!({
+            "reports": [{
+                "provider": "google-antigravity",
+                "quota": {
+                    "customWindows": [
+                        {"label": "Gem", "percent": 0.0, "resetAt": 1_790_038_030_000u64},
+                        {"label": "Gem (Weekly)", "percent": 1.99, "resetAt": 1_790_253_601_000u64},
+                        {"label": "Cla", "percent": 40.0, "resetAt": 1_790_038_030_000u64},
+                        {"label": "Cla (Weekly)", "percent": 80.0, "resetAt": 1_790_624_830_000u64}
+                    ]
+                }
+            }]
+        });
+        assert_eq!(
+            hub_quota_provider_name("ocx", Some("claude-ocx-combo--flash")),
+            "google-antigravity"
+        );
+        assert_eq!(antigravity_family(Some("claude-ocx-combo--flash")), "cla");
+        assert_eq!(antigravity_family(Some("flash (combo)")), "gem");
+        let usage = parse_ocx_hub_quotas(&value, "ocx", Some("claude-ocx-combo--flash"), 0)
+            .expect("cla windows");
+        let weekly = usage.accounts[0]
+            .windows
+            .iter()
+            .find(|window| window.kind == WindowKind::Weekly)
+            .expect("7d");
+        assert_eq!(weekly.used_percent, 80.0, "claude-*flash must select Cla, not Gem");
+        let short = usage.accounts[0]
+            .windows
+            .iter()
+            .find(|window| window.kind == WindowKind::FiveHour)
+            .expect("5h");
+        assert_eq!(short.used_percent, 40.0);
     }
 }
