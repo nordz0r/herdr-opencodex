@@ -83,18 +83,11 @@ pub fn fetch(
     Ok(usage)
 }
 
-/// Remaining 5h/7d for an omp pane on a remote OpenCodex hub.
+/// Remaining 5h/7d for an agent pane on a remote OpenCodex hub.
 ///
-/// `omp usage` is empty for OCX API-key auth. Hub remaining is management
-/// `GET /api/provider-quotas`, not data-plane `/v1/usage`. Token is never logged.
-fn fetch_ocx_hub_usage(
-    provider_id: &str,
-    model_id: Option<&str>,
-    now_unix: u64,
-) -> Option<ProviderUsage> {
-    if !ocx_hub_provider(provider_id) {
-        return None;
-    }
+/// Hub remaining is management `GET /api/provider-quotas`, not data-plane `/v1/usage`.
+/// Token is never logged.
+pub fn fetch_ocx_hub_payload() -> Option<Value> {
     let (base_url, token) = ocx_hub_credentials()?;
     let url = format!("{}/api/provider-quotas", base_url.trim_end_matches('/'));
     let response = ureq::get(&url)
@@ -107,7 +100,18 @@ fn fetch_ocx_hub_usage(
     if response.status() != 200 {
         return None;
     }
-    let value: Value = response.into_json().ok()?;
+    response.into_json().ok()
+}
+
+pub fn fetch_ocx_hub_usage(
+    provider_id: &str,
+    model_id: Option<&str>,
+    now_unix: u64,
+) -> Option<ProviderUsage> {
+    if !ocx_hub_provider(provider_id) {
+        return None;
+    }
+    let value = fetch_ocx_hub_payload()?;
     parse_ocx_hub_quotas(&value, provider_id, model_id, now_unix)
 }
 
@@ -142,7 +146,17 @@ fn ocx_hub_token_path() -> Option<PathBuf> {
 }
 
 fn read_pref_line(name: &str) -> Option<String> {
-    let directory = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR").map(PathBuf::from)?;
+    let directory = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let home = directories::BaseDirs::new()?.home_dir().to_path_buf();
+            let p1 = home.join(".config/herdr/plugins/config/nordz0r.agent-quota");
+            if p1.is_dir() {
+                Some(p1)
+            } else {
+                Some(home.join(".config/herdr/plugins/config/herdr-agent-quota"))
+            }
+        })?;
     read_secret_file(&directory.join(name))
 }
 
@@ -168,13 +182,13 @@ pub fn hub_quota_provider_name(provider_id: &str, model_id: Option<&str>) -> &'s
     if haystack.contains("zai") || haystack.contains("glm") || haystack.contains("gldf") {
         return "zai";
     }
-    if haystack.contains("antigravity") || haystack.contains("gemini") {
+    if haystack.contains("antigravity") || haystack.contains("gemini") || haystack.contains("flash") {
         return "google-antigravity";
     }
     "xai"
 }
 
-fn parse_ocx_hub_quotas(
+pub fn parse_ocx_hub_quotas(
     value: &Value,
     provider_id: &str,
     model_id: Option<&str>,
@@ -275,7 +289,9 @@ fn custom_windows(quota: &Value, model_id: Option<&str>) -> Vec<UsageWindow> {
 
 fn antigravity_family(model_id: Option<&str>) -> &'static str {
     let model = model_id.unwrap_or("").to_ascii_lowercase();
-    if model.contains("claude") || model.contains("cla") {
+    if model.contains("gemini") || model.contains("gem") || model.contains("flash") {
+        "gem"
+    } else if model.contains("claude") || model.contains("cla") {
         "cla"
     } else {
         "gem"

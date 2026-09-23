@@ -526,15 +526,57 @@ fn resolved_pane_tokens(
                         }
                     }
                 }
-                tokens_for_loaded_snapshot(
+                let mut tokens = tokens_for_loaded_snapshot(
                     provider,
                     snapshot.as_ref(),
                     usable,
                     now,
                     pane.session.as_ref().and_then(|session| session.id()),
                     row,
-                )
-                .map(|values| PaneQuotaUpdate::Replace(Box::new(values)))
+                );
+                if provider == Provider::Claude {
+                    let needs_hub = tokens.as_ref().map(|t| t.quota_5h.contains("N/A") || t.quota_5h.is_empty()).unwrap_or(true);
+                    if needs_hub {
+                        let session_id = pane.session.as_ref().and_then(|s| s.id());
+                        let model_str = snapshot
+                            .as_ref()
+                            .and_then(|s| s.model_for_session(session_id))
+                            .or_else(|| tokens.as_ref().and_then(|t| (!t.quota_model.is_empty()).then_some(t.quota_model.as_str())))
+                            .or_else(|| pane.tokens.get("quota_model").map(String::as_str));
+                        let is_ocx = model_str.is_some_and(|m| {
+                            let l = m.to_ascii_lowercase();
+                            l.contains("ocx") || l.contains("native") || l.contains("combo")
+                        });
+                        if is_ocx {
+                            if let Some(hub) = crate::providers::omp::fetch_ocx_hub_usage("ocx", model_str, now) {
+                                if let Some(account) = hub.accounts.into_iter().next() {
+                                    let mut temp_snap = snapshot.unwrap_or_else(|| ProviderSnapshot::new(Provider::Claude, vec![], now));
+                                    temp_snap.windows = account.windows;
+                                    temp_snap.session_quota_only = false;
+                                    if let Some(fallback_tokens) = tokens_for_loaded_snapshot(
+                                        provider,
+                                        Some(&temp_snap),
+                                        Some(&temp_snap),
+                                        now,
+                                        None,
+                                        row,
+                                    ) {
+                                        if let Some(tokens_val) = tokens.as_mut() {
+                                            tokens_val.quota_5h = fallback_tokens.quota_5h;
+                                            tokens_val.quota_5h_severity = fallback_tokens.quota_5h_severity;
+                                            tokens_val.quota_week = fallback_tokens.quota_week;
+                                            tokens_val.quota_week_severity = fallback_tokens.quota_week_severity;
+                                            tokens_val.quota_headroom = fallback_tokens.quota_headroom;
+                                        } else {
+                                            tokens = Some(fallback_tokens);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                tokens.map(|values| PaneQuotaUpdate::Replace(Box::new(values)))
             } else {
                 // Not one of the original four, so it is never fetched by the
                 // provider list: this pane resolved to it, so this pane pays
@@ -1012,14 +1054,6 @@ fn load_statusline_snapshot(cache: &CacheStore, provider: Provider) -> Result<Fe
         .and_then(|snapshot| snapshot.context)
         .and_then(|context| context.cache);
     enrich_cache_session(&mut snapshot, &value, previous_cache.as_ref());
-    if provider == Provider::Claude {
-        crate::providers::claude::apply_prompt_cache(
-            &mut snapshot.context,
-            value
-                .get("prompt_cache")
-                .or_else(|| value.get("promptCache")),
-        );
-    }
     let session_id = value
         .get("session_id")
         .or_else(|| value.get("sessionId"))
@@ -1027,6 +1061,42 @@ fn load_statusline_snapshot(cache: &CacheStore, provider: Provider) -> Result<Fe
         .or_else(|| value.get("conversationId"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string);
+    if provider == Provider::Claude {
+        crate::providers::claude::apply_prompt_cache(
+            &mut snapshot.context,
+            value
+                .get("prompt_cache")
+                .or_else(|| value.get("promptCache")),
+        );
+        let is_ocx = crate::providers::claude::is_ocx_session(&value)
+            || snapshot.session_models.values().any(|m| {
+                let l = m.to_ascii_lowercase();
+                l.contains("ocx") || l.contains("native") || l.contains("combo")
+            });
+        if is_ocx {
+            let now_unix = CacheStore::now_unix();
+            if let Some(payload) = crate::providers::omp::fetch_ocx_hub_payload() {
+                let mut session_keys: std::collections::BTreeSet<String> = snapshot.session_contexts.keys().cloned().collect();
+                session_keys.extend(snapshot.session_models.keys().cloned());
+                if let Some(curr_session) = session_id.as_deref() {
+                    session_keys.insert(curr_session.to_string());
+                }
+                for sid in session_keys {
+                    let model = snapshot.session_models.get(&sid).cloned().or_else(|| snapshot.model.clone());
+                    if let Some(usage) = crate::providers::omp::parse_ocx_hub_quotas(&payload, "ocx", model.as_deref(), now_unix) {
+                        if let Some(account) = usage.accounts.into_iter().next() {
+                            snapshot.session_windows.insert(sid, account.windows);
+                        }
+                    }
+                }
+                if let Some(usage) = crate::providers::omp::parse_ocx_hub_quotas(&payload, "ocx", snapshot.model.as_deref(), now_unix) {
+                    if let Some(account) = usage.accounts.into_iter().next() {
+                        snapshot.windows = account.windows;
+                    }
+                }
+            }
+        }
+    }
     Ok(FetchedSnapshot {
         snapshot,
         preserve_context: true,

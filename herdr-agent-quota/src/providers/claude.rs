@@ -21,28 +21,25 @@ pub fn parse_statusline(
             .or_else(|| value.get("promptCache")),
     );
     let model = parse_model(value);
-    let Some(limits) = value.get("rate_limits") else {
-        return Ok(
-            ProviderSnapshot::new(Provider::Claude, vec![], fetched_at_unix)
-                .session_local()
-                .with_model(model)
-                .with_context(context),
-        );
-    };
     let mut windows = Vec::new();
-    if let Some(window) = parse_window(limits.get("five_hour"), WindowKind::FiveHour)? {
-        windows.push(window);
+    if let Some(limits) = value.get("rate_limits") {
+        if let Some(window) = parse_window(limits.get("five_hour"), WindowKind::FiveHour)? {
+            windows.push(window);
+        }
+        if let Some(window) = parse_window(limits.get("seven_day"), WindowKind::Weekly)? {
+            windows.push(window);
+        }
     }
-    if let Some(window) = parse_window(limits.get("seven_day"), WindowKind::Weekly)? {
-        windows.push(window);
-    }
-    if windows.is_empty() {
-        return Ok(
-            ProviderSnapshot::new(Provider::Claude, vec![], fetched_at_unix)
-                .session_local()
-                .with_model(model)
-                .with_context(context),
-        );
+    if windows.is_empty() && is_ocx_session(value) {
+        if let Some(usage) = crate::providers::omp::fetch_ocx_hub_usage(
+            "ocx",
+            model.as_deref(),
+            fetched_at_unix,
+        ) {
+            if let Some(account) = usage.accounts.into_iter().next() {
+                windows = account.windows;
+            }
+        }
     }
     Ok(
         ProviderSnapshot::new(Provider::Claude, windows, fetched_at_unix)
@@ -50,6 +47,20 @@ pub fn parse_statusline(
             .with_model(model)
             .with_context(context),
     )
+}
+
+pub fn is_ocx_session(value: &Value) -> bool {
+    let Some(model) = value.get("model") else {
+        return false;
+    };
+    let id = model.get("id").and_then(Value::as_str).unwrap_or("");
+    let display_name = model
+        .get("display_name")
+        .or_else(|| model.get("displayName"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let lower = format!("{}/{}", id.to_ascii_lowercase(), display_name.to_ascii_lowercase());
+    lower.contains("ocx") || lower.contains("native") || lower.contains("combo")
 }
 
 fn parse_window(
@@ -323,6 +334,16 @@ mod tests {
                 .map(|context| context.used_percent),
             Some(43.0)
         );
+    }
+
+    #[test]
+    fn test_parse_statusline_ocx_flash() {
+        let value = json!({
+            "model": {"id": "claude-ocx-combo--flash", "display_name": "flash (combo)"},
+            "context_window": {"used_percentage": 12.0}
+        });
+        let snapshot = parse_statusline(&value, 1).unwrap();
+        assert!(!snapshot.windows.is_empty());
     }
 
     #[test]
