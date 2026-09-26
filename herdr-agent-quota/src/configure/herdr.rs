@@ -231,11 +231,32 @@ pub fn uninstall(
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("HERDR_CONFIG_FILE") {
-        return Ok(PathBuf::from(path));
+    for key in ["HERDR_CONFIG_FILE", "HERDR_CONFIG_PATH"] {
+        if let Some(path) = std::env::var_os(key).filter(|path| !path.is_empty()) {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    Ok(herdr_config_dir()?.join("config.toml"))
+}
+
+/// Same directory Herdr itself uses: `XDG_CONFIG_HOME`, then `%APPDATA%` on
+/// Windows, otherwise `~/.config`.
+fn herdr_config_dir() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|dir| !dir.is_empty()) {
+        return Ok(PathBuf::from(dir).join("herdr"));
+    }
+    #[cfg(windows)]
+    {
+        if let Some(dir) = std::env::var_os("APPDATA").filter(|dir| !dir.is_empty()) {
+            return Ok(PathBuf::from(dir).join("herdr"));
+        }
+        if let Some(profile) = std::env::var_os("USERPROFILE").filter(|profile| !profile.is_empty())
+        {
+            return Ok(PathBuf::from(profile).join("AppData/Roaming/herdr"));
+        }
     }
     let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".config/herdr/config.toml"))
+    Ok(PathBuf::from(home).join(".config/herdr"))
 }
 
 /// Herdr's own documented defaults for the sidebar width keys, used whenever
@@ -276,9 +297,17 @@ fn client_shell_sidebar_width() -> Option<usize> {
 }
 
 fn client_shell_state_dir() -> Option<PathBuf> {
-    if let Some(state) = std::env::var_os("XDG_STATE_HOME") {
-        if !state.is_empty() {
-            return Some(PathBuf::from(state).join("herdr/client-shell"));
+    if let Some(state) = std::env::var_os("XDG_STATE_HOME").filter(|state| !state.is_empty()) {
+        return Some(PathBuf::from(state).join("herdr/client-shell"));
+    }
+    #[cfg(windows)]
+    {
+        if let Some(dir) = std::env::var_os("LOCALAPPDATA").filter(|dir| !dir.is_empty()) {
+            return Some(PathBuf::from(dir).join("herdr/client-shell"));
+        }
+        if let Some(profile) = std::env::var_os("USERPROFILE").filter(|profile| !profile.is_empty())
+        {
+            return Some(PathBuf::from(profile).join("AppData/Local/herdr/client-shell"));
         }
     }
     let home = std::env::var_os("HOME")?;

@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+#![cfg(unix)]
+
 use herdr_agent_quota::cache::CacheStore;
 use herdr_agent_quota::cli::{FieldSet, PercentStyle, SidebarLayout};
 use herdr_agent_quota::model::{Provider, ProviderSnapshot, UsageWindow, WindowKind};

@@ -586,6 +586,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn database_opens_under_a_path_containing_uri_punctuation() {
         let directory = tempdir().unwrap();
         let store = directory.path().join("we?ird#dir");

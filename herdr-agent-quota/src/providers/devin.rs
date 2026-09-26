@@ -1014,6 +1014,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn credentials_path_falls_back_to_home() {
         std::env::remove_var("XDG_DATA_HOME");
         std::env::remove_var("DEVIN_CREDENTIALS_FILE");

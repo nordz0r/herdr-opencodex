@@ -9,6 +9,31 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+/// Windows cannot infer `codex.cmd` from a bare `codex` program name the way
+/// Unix shells resolve `codex` through symlinks and shebangs. npm and similar
+/// shims are looked up explicitly on `PATH`, preferring real executables.
+#[cfg(windows)]
+pub fn resolve_program(program: &std::ffi::OsStr) -> std::ffi::OsString {
+    let path = std::path::Path::new(program);
+    if path.extension().is_some() || path.components().count() > 1 {
+        return program.to_os_string();
+    }
+    if let Some(search) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&search) {
+            for extension in ["exe", "cmd", "bat"] {
+                let candidate = directory.join(format!(
+                    "{}.{extension}",
+                    program.to_string_lossy()
+                ));
+                if candidate.is_file() {
+                    return candidate.into_os_string();
+                }
+            }
+        }
+    }
+    program.to_os_string()
+}
+
 /// A statusLine command must never consume the refresh interval itself.
 pub const STATUSLINE_COMMAND_BUDGET: Duration = Duration::from_secs(2);
 
@@ -109,6 +134,7 @@ fn terminate_and_reap(child: &Mutex<Option<Child>>) -> Result<Option<ExitStatus>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::time::Instant;
 
     #[test]
@@ -121,6 +147,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn kills_a_command_that_exceeds_its_budget() {
         let started = Instant::now();
         let result =

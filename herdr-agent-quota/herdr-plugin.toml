@@ -1,9 +1,9 @@
 id = "nordz0r.agent-quota"
 name = "Herdr Agent Quota (OCX hub remaining)"
-version = "1.6.0"
+version = "1.6.1"
 min_herdr_version = "0.9.0"
 description = "Credential-scoped AI quota in Herdr, with OpenCodex hub remaining 5h/7d for omp API-key panes."
-platforms = ["macos", "linux"]
+platforms = ["macos", "linux", "windows"]
 
 [[build]]
 command = ["cargo", "build", "--release"]

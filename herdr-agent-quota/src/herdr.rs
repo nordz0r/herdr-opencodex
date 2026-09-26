@@ -240,12 +240,24 @@ pub fn clear_quota_agent_view() -> Result<()> {
 /// Outside Herdr there is no socket and this is a no-op, exactly like
 /// [`crate::prefs::write`], so a direct CLI run still works.
 fn socket_request(payload: &Value) -> Result<Option<Value>> {
-    use std::io::{BufRead, BufReader, Write};
-
     let Some(path) = std::env::var_os("HERDR_SOCKET_PATH") else {
         return Ok(None);
     };
-    let stream = std::os::unix::net::UnixStream::connect(&path)
+    #[cfg(unix)]
+    {
+        unix_socket_request(&path, payload)
+    }
+    #[cfg(windows)]
+    {
+        windows_pipe_request(&path, payload)
+    }
+}
+
+#[cfg(unix)]
+fn unix_socket_request(path: &std::ffi::OsStr, payload: &Value) -> Result<Option<Value>> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let stream = std::os::unix::net::UnixStream::connect(path)
         .with_context(|| format!("connect to Herdr at {}", path.to_string_lossy()))?;
     stream.set_read_timeout(Some(SOCKET_TIMEOUT))?;
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))?;
@@ -256,7 +268,53 @@ fn socket_request(payload: &Value) -> Result<Option<Value>> {
     BufReader::new(&stream)
         .read_line(&mut line)
         .context("read Herdr socket reply")?;
-    let reply: Value = serde_json::from_str(&line).context("parse Herdr socket reply")?;
+    parse_socket_reply(&line)
+}
+
+/// Herdr on Windows does not listen on the file named by `HERDR_SOCKET_PATH`.
+/// That file is a marker (`pid:nanos`). The API socket is the namespaced pipe
+/// `interprocess` derives from the same path string, matching Herdr's own
+/// client. A named-pipe stream has no read timeout, so the request runs on a
+/// worker bounded by [`SOCKET_TIMEOUT`].
+#[cfg(windows)]
+fn windows_pipe_request(path: &std::ffi::OsStr, payload: &Value) -> Result<Option<Value>> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let pipe_path = path.to_os_string();
+    let payload = payload.to_string();
+    let worker = std::thread::spawn(move || -> Result<String> {
+        use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
+
+        let path = pipe_path.to_string_lossy().into_owned();
+        let name = path
+            .clone()
+            .to_ns_name::<GenericNamespaced>()
+            .map_err(|error| anyhow::anyhow!("Herdr socket name: {error}"))?;
+        let stream = Stream::connect(name).with_context(|| format!("connect to Herdr at {path}"))?;
+        let mut writer = &stream;
+        writeln!(writer, "{payload}").context("send Herdr socket request")?;
+        writer.flush().context("flush Herdr socket request")?;
+        let mut line = String::new();
+        BufReader::new(&stream)
+            .read_line(&mut line)
+            .context("read Herdr socket reply")?;
+        Ok(line)
+    });
+    let deadline = std::time::Instant::now() + SOCKET_TIMEOUT;
+    while !worker.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for Herdr socket reply");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let line = worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("Herdr socket worker panicked"))??;
+    parse_socket_reply(&line)
+}
+
+fn parse_socket_reply(line: &str) -> Result<Option<Value>> {
+    let reply: Value = serde_json::from_str(line).context("parse Herdr socket reply")?;
     if let Some(error) = reply.get("error") {
         let message = error
             .get("message")
@@ -265,6 +323,26 @@ fn socket_request(payload: &Value) -> Result<Option<Value>> {
         anyhow::bail!("{message}");
     }
     Ok(Some(reply))
+}
+
+#[cfg(all(test, windows))]
+mod windows_socket {
+    use super::*;
+
+    #[test]
+    fn reaches_a_running_herdr_server() {
+        if std::env::var_os("HERDR_SOCKET_PATH").is_none() {
+            return;
+        }
+        let reply = socket_request(&serde_json::json!({
+            "id": "agent-quota:windows-smoke",
+            "method": "workspace.list",
+            "params": {},
+        }))
+        .expect("socket reply");
+        let reply = reply.expect("socket path");
+        assert!(reply.get("result").is_some(), "{reply}");
+    }
 }
 
 pub fn list_agent_panes() -> Result<Vec<AgentPane>> {

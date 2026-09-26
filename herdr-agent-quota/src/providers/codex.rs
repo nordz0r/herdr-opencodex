@@ -143,6 +143,8 @@ fn parse_reset(value: &Value) -> Option<ResetAt> {
 /// behind the bounded `thread/list` page.
 pub fn fetch_for_sessions(session_ids: &[String]) -> Result<ProviderSnapshot> {
     let executable = std::env::var_os("CODEX_BIN_PATH").unwrap_or_else(|| "codex".into());
+    #[cfg(windows)]
+    let executable = crate::process::resolve_program(&executable);
     let mut command = Command::new(executable);
     command
         .args(["app-server", "--stdio"])

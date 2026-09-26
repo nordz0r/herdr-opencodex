@@ -57,6 +57,8 @@ pub fn fetch(
     now_unix: u64,
 ) -> Result<ProviderUsage> {
     let executable = std::env::var_os("HERDR_AGENT_QUOTA_OMP_BIN").unwrap_or_else(|| "omp".into());
+    #[cfg(windows)]
+    let executable = crate::process::resolve_program(&executable);
     let mut command = Command::new(executable);
     command.args(["usage", "--json", "--provider", provider_id]);
     if let Some(config_dir) = config_dir_override(&paths.agent_dir) {
@@ -842,6 +844,7 @@ mod tests {
     /// called: the provider filter has to reach omp, and the report has to come
     /// back parsed.
     #[test]
+    #[cfg(unix)]
     fn the_cli_is_called_for_one_provider_and_its_report_is_parsed() {
         let dir = tempfile::tempdir().unwrap();
         let stub = dir.path().join("omp-stub");

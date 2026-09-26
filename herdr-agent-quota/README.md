@@ -38,7 +38,9 @@ the settings pane.
 ## Install and upgrade
 
 Requires **Herdr 0.9.0+**, the Rust toolchain pinned in `rust-toolchain.toml`,
-macOS or Linux, and a supported agent CLI.
+and a supported agent CLI. Platforms: macOS, Linux, and Windows. On Windows,
+`HERDR_SOCKET_PATH` is a marker file; the plugin connects to the namespaced
+pipe Herdr derives from that path, and config lives in `%APPDATA%\herdr`.
 
 ```sh
 herdr plugin install nordz0r/herdr-opencodex/herdr-agent-quota --yes

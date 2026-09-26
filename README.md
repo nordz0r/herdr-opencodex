@@ -70,6 +70,8 @@ Based on [levi-qiao/herdr-agent-quota](https://github.com/levi-qiao/herdr-agent-
 
 That endpoint rejects data-plane keys (401). Put the hub **admin** token in `~/.opencodex/hub-admin-api-token` (mode 0600) and point the plugin at it:
 
+On Windows the plugin builds with `cargo` (`platforms` includes `windows`). Herdr's config is `%APPDATA%\herdr\config.toml`, not `~/.config/herdr`. A machine connected to a hub as a client has its own `~/.opencodex/admin-api-token`; that token is not the hub admin token and `GET /api/provider-quotas` rejects it. Use the token from the hub host.
+
 ```bash
 CFG="$(herdr plugin config-dir nordz0r.agent-quota)"
 printf '%s\n' 'https://ocx.goldfinches.ru' > "$CFG/ocx-hub-url"
