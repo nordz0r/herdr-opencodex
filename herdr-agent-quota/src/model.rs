@@ -345,6 +345,10 @@ pub struct UsageWindow {
     /// ordering of omp windows; it is not used to rewrite their labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_seconds: Option<u64>,
+    /// USD cap of a credit balance (OCX OpenRouter key). Set, the window is a
+    /// balance: its label is `$left/$limit` or `$used/$limit` by percent style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit_limit_usd: Option<f64>,
 }
 
 impl UsageWindow {
@@ -363,6 +367,7 @@ impl UsageWindow {
             resets_at,
             source_label: None,
             duration_seconds: None,
+            credit_limit_usd: None,
         })
     }
 

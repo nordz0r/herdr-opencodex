@@ -285,43 +285,49 @@ fn hub_window(
     })
 }
 
-/// Credit-based providers (OpenRouter key cap, A6API balance) report USD, not 5h/7d.
+/// Credit-based providers (OpenRouter key cap) report USD, not 5h/7d.
 ///
-/// The hub sends `creditsUsd` when it has it, and always the dashboard row
+/// The hub sends the dashboard row
 /// `customWindows: [{label: "API credits ($0.87 of $1.00 remaining)", percent}]`
-/// (OpenRouter sends only that row). The balance goes into the long slot as
-/// `$0.87/$1.00`, so the sidebar reads `$0.87/$1.00 87%` with no reset.
+/// (`percent` is used), and `creditsUsd` for some providers. A complete
+/// `creditsUsd` wins; otherwise the label is parsed. The balance goes into the
+/// long slot with no reset and renders as `$0.87/$1.00 87%`.
 fn credit_window(quota: &Value) -> Option<UsageWindow> {
     let number = |row: &Value, key: &str| row.get(key).and_then(Value::as_f64);
-    let (remaining, limit, used) = match quota.get("creditsUsd") {
-        Some(credits) if credits.get("unlimited").and_then(Value::as_bool) != Some(true) => (
-            number(credits, "remaining")?,
-            number(credits, "limit")?,
-            number(credits, "percent")?,
-        ),
-        Some(_) => return None,
-        None => {
-            let row = quota.get("customWindows")?.as_array()?.iter().find(|row| {
-                row.get("label")
-                    .and_then(Value::as_str)
-                    .is_some_and(|label| label.starts_with("API credits ($"))
-            })?;
-            let label = row.get("label").and_then(Value::as_str)?;
-            let mut amounts = label.split('$').skip(1).filter_map(|part| {
-                let end = part
-                    .find(|c: char| !c.is_ascii_digit() && c != '.')
-                    .unwrap_or(part.len());
-                part[..end].parse::<f64>().ok()
-            });
-            (amounts.next()?, amounts.next()?, number(row, "percent")?)
-        }
-    };
-    if !(remaining.is_finite() && limit.is_finite() && limit > 0.0) {
+    let credits = quota.get("creditsUsd");
+    if credits
+        .and_then(|credits| credits.get("unlimited"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
         return None;
     }
-    UsageWindow::new(WindowKind::Weekly, used, None)
-        .ok()
-        .map(|window| window.with_source_window(format!("${remaining:.2}/${limit:.2}"), None))
+    let from_credits =
+        credits.and_then(|credits| Some((number(credits, "limit")?, number(credits, "percent")?)));
+    let from_label = || {
+        let row = quota.get("customWindows")?.as_array()?.iter().find(|row| {
+            row.get("label")
+                .and_then(Value::as_str)
+                .is_some_and(|label| label.starts_with("API credits ($"))
+        })?;
+        let label = row.get("label").and_then(Value::as_str)?;
+        let limit = label.split(" of $").nth(1).and_then(|rest| {
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit() && c != '.')
+                .unwrap_or(rest.len());
+            rest[..end].parse::<f64>().ok()
+        })?;
+        Some((limit, number(row, "percent")?))
+    };
+    let (limit, used) = from_credits.or_else(from_label)?;
+    if !(limit.is_finite() && limit > 0.0) {
+        return None;
+    }
+    let mut window = UsageWindow::new(WindowKind::Weekly, used, None)
+        .ok()?
+        .with_source_window("credits", None);
+    window.credit_limit_usd = Some(limit);
+    Some(window)
 }
 
 fn custom_windows(quota: &Value, model_id: Option<&str>) -> Vec<UsageWindow> {
@@ -1068,6 +1074,17 @@ mod tests {
         assert_eq!(short.used_percent, 40.0);
     }
 
+    fn openrouter_payload(quota: Value) -> Value {
+        json!({"reports": [
+            {"provider": "xai", "quota": {"weeklyPercent": 51.0}},
+            {"provider": "openrouter", "quota": quota}
+        ]})
+    }
+
+    fn openrouter_credits(value: &Value) -> Option<ProviderUsage> {
+        parse_ocx_hub_quotas(value, "ocx", Some("openrouter/deepseek/deepseek-v3.2"), 0)
+    }
+
     #[test]
     fn ocx_hub_quotas_map_openrouter_credits_to_the_long_slot() {
         let value: Value = serde_json::from_str(include_str!(
@@ -1078,13 +1095,11 @@ mod tests {
             hub_quota_provider_name("ocx", Some("openrouter/openai/gpt-5")),
             "openrouter"
         );
-        let usage =
-            parse_ocx_hub_quotas(&value, "ocx", Some("openrouter/deepseek/deepseek-v3.2"), 0)
-                .expect("openrouter credits");
+        let usage = openrouter_credits(&value).expect("openrouter credits");
         let window = &usage.accounts[0].windows[0];
         assert_eq!(usage.accounts[0].windows.len(), 1);
         assert_eq!(window.kind, WindowKind::Weekly);
-        assert_eq!(window.display_label(), "$0.87/$1.00");
+        assert_eq!(window.credit_limit_usd, Some(1.0));
         assert_eq!(window.remaining_percent, 87.0);
         assert_eq!(window.resets_at, None);
 
@@ -1096,19 +1111,73 @@ mod tests {
             .map(UsageWindow::display_label)
             .collect();
         assert_eq!(labels, ["5h", "7d"]);
+        assert!(openai.accounts[0]
+            .windows
+            .iter()
+            .all(|window| window.credit_limit_usd.is_none()));
     }
 
     #[test]
     fn ocx_hub_credits_usd_wins_over_the_label() {
-        let value = json!({"reports": [{
-            "provider": "openrouter",
-            "quota": {
-                "creditsUsd": {"used": 2.5, "limit": 10.0, "remaining": 7.5, "percent": 25.0},
-                "customWindows": [{"label": "API credits ($7.50 of $10.00 remaining)", "percent": 25.0}]
-            }
-        }]});
-        let usage = parse_ocx_hub_quotas(&value, "ocx", Some("openrouter/x"), 0).expect("credits");
-        assert_eq!(usage.accounts[0].windows[0].display_label(), "$7.50/$10.00");
-        assert_eq!(usage.accounts[0].windows[0].remaining_percent, 75.0);
+        let value = openrouter_payload(json!({
+            "creditsUsd": {"used": 2.5, "limit": 10.0, "remaining": 7.5, "percent": 25.0},
+            "customWindows": [{"label": "API credits ($0.87 of $1.00 remaining)", "percent": 13.0}]
+        }));
+        let window = &openrouter_credits(&value).expect("credits").accounts[0].windows[0];
+        assert_eq!(window.credit_limit_usd, Some(10.0));
+        assert_eq!(window.remaining_percent, 75.0);
+    }
+
+    #[test]
+    fn ocx_hub_incomplete_credits_usd_falls_back_to_the_label() {
+        let value = openrouter_payload(json!({
+            "creditsUsd": {"used": 1.0, "remaining": 9.0},
+            "customWindows": [{"label": "API credits ($9.00 of $10.00 remaining)", "percent": 10.0}]
+        }));
+        let window = &openrouter_credits(&value).expect("label").accounts[0].windows[0];
+        assert_eq!(window.credit_limit_usd, Some(10.0));
+        assert_eq!(window.remaining_percent, 90.0);
+    }
+
+    #[test]
+    fn ocx_hub_exhausted_openrouter_credits_read_zero_remaining() {
+        let value = openrouter_payload(json!({
+            "customWindows": [{"label": "API credits ($0.00 of $1.00 remaining)", "percent": 100}]
+        }));
+        let window = &openrouter_credits(&value).expect("exhausted").accounts[0].windows[0];
+        assert_eq!(window.credit_limit_usd, Some(1.0));
+        assert_eq!(window.remaining_percent, 0.0);
+    }
+
+    /// Every one of these leaves the pane at N/A rather than guessing, and
+    /// none of them borrows the xAI report from the same payload.
+    #[test]
+    fn ocx_hub_openrouter_without_usable_credits_yields_nothing() {
+        let unusable = [
+            // No key cap: the hub sends no credits row.
+            openrouter_payload(json!({"updatedAt": 1})),
+            // Unlimited balance.
+            openrouter_payload(json!({
+                "creditsUsd": {"used": 0, "limit": 0, "remaining": 0, "percent": 0, "unlimited": true},
+                "customWindows": [{"label": "Unlimited API credits", "percent": 0}]
+            })),
+            // Missing percent.
+            openrouter_payload(json!({
+                "customWindows": [{"label": "API credits ($0.87 of $1.00 remaining)"}]
+            })),
+            // Malformed amounts.
+            openrouter_payload(json!({
+                "customWindows": [{"label": "API credits ($? of $? remaining)", "percent": 13}]
+            })),
+            // Zero cap.
+            openrouter_payload(json!({
+                "customWindows": [{"label": "API credits ($0.00 of $0.00 remaining)", "percent": 0}]
+            })),
+            // No openrouter report at all.
+            json!({"reports": [{"provider": "xai", "quota": {"weeklyPercent": 51.0}}]}),
+        ];
+        for value in &unusable {
+            assert_eq!(openrouter_credits(value), None, "{value}");
+        }
     }
 }

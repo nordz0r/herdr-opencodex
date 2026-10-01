@@ -11,8 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - OCX panes on OpenRouter models (`ocx/openrouter/…`) no longer show
   `quota account is not confirmed` / `7d N/A`. They read the hub's
   OpenRouter report and show the remaining API credits in the long slot,
-  e.g. `$0.87/$1.00 87%`. Other credit-based hub reports (`creditsUsd`) render
-  the same way; 5h/7d providers are unchanged.
+  e.g. `$0.87/$1.00 87%` (`$0.13/$1.00 13%` with the `used` percent style).
+  5h/7d providers are unchanged.
 
 ## [1.6.1] - 2026-09-26
 
