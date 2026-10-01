@@ -174,6 +174,10 @@ pub fn hub_quota_provider_name(provider_id: &str, model_id: Option<&str>) -> &'s
         provider_id.to_ascii_lowercase(),
         model_id.unwrap_or("").to_ascii_lowercase()
     );
+    // Before the OpenAI check: OpenRouter ids embed upstream names (`openrouter/openai/gpt-…`).
+    if haystack.contains("openrouter") {
+        return "openrouter";
+    }
     if haystack.contains("openai")
         || haystack.contains("gpt-")
         || haystack.contains("codex")
@@ -238,6 +242,9 @@ pub fn parse_ocx_hub_quotas(
         }
     }
     if windows.is_empty() {
+        windows.extend(credit_window(quota));
+    }
+    if windows.is_empty() {
         windows.extend(custom_windows(quota, model_id));
     }
     if windows.is_empty() {
@@ -276,6 +283,45 @@ fn hub_window(
             Some(kind.duration_seconds()),
         )
     })
+}
+
+/// Credit-based providers (OpenRouter key cap, A6API balance) report USD, not 5h/7d.
+///
+/// The hub sends `creditsUsd` when it has it, and always the dashboard row
+/// `customWindows: [{label: "API credits ($0.87 of $1.00 remaining)", percent}]`
+/// (OpenRouter sends only that row). The balance goes into the long slot as
+/// `$0.87/$1.00`, so the sidebar reads `$0.87/$1.00 87%` with no reset.
+fn credit_window(quota: &Value) -> Option<UsageWindow> {
+    let number = |row: &Value, key: &str| row.get(key).and_then(Value::as_f64);
+    let (remaining, limit, used) = match quota.get("creditsUsd") {
+        Some(credits) if credits.get("unlimited").and_then(Value::as_bool) != Some(true) => (
+            number(credits, "remaining")?,
+            number(credits, "limit")?,
+            number(credits, "percent")?,
+        ),
+        Some(_) => return None,
+        None => {
+            let row = quota.get("customWindows")?.as_array()?.iter().find(|row| {
+                row.get("label")
+                    .and_then(Value::as_str)
+                    .is_some_and(|label| label.starts_with("API credits ($"))
+            })?;
+            let label = row.get("label").and_then(Value::as_str)?;
+            let mut amounts = label.split('$').skip(1).filter_map(|part| {
+                let end = part
+                    .find(|c: char| !c.is_ascii_digit() && c != '.')
+                    .unwrap_or(part.len());
+                part[..end].parse::<f64>().ok()
+            });
+            (amounts.next()?, amounts.next()?, number(row, "percent")?)
+        }
+    };
+    if !(remaining.is_finite() && limit.is_finite() && limit > 0.0) {
+        return None;
+    }
+    UsageWindow::new(WindowKind::Weekly, used, None)
+        .ok()
+        .map(|window| window.with_source_window(format!("${remaining:.2}/${limit:.2}"), None))
 }
 
 fn custom_windows(quota: &Value, model_id: Option<&str>) -> Vec<UsageWindow> {
@@ -1020,5 +1066,49 @@ mod tests {
             .find(|window| window.kind == WindowKind::FiveHour)
             .expect("5h");
         assert_eq!(short.used_percent, 40.0);
+    }
+
+    #[test]
+    fn ocx_hub_quotas_map_openrouter_credits_to_the_long_slot() {
+        let value: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/ocx/provider-quotas-openrouter.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            hub_quota_provider_name("ocx", Some("openrouter/openai/gpt-5")),
+            "openrouter"
+        );
+        let usage =
+            parse_ocx_hub_quotas(&value, "ocx", Some("openrouter/deepseek/deepseek-v3.2"), 0)
+                .expect("openrouter credits");
+        let window = &usage.accounts[0].windows[0];
+        assert_eq!(usage.accounts[0].windows.len(), 1);
+        assert_eq!(window.kind, WindowKind::Weekly);
+        assert_eq!(window.display_label(), "$0.87/$1.00");
+        assert_eq!(window.remaining_percent, 87.0);
+        assert_eq!(window.resets_at, None);
+
+        // Window-based providers in the same payload keep their 5h/7d.
+        let openai = parse_ocx_hub_quotas(&value, "ocx", Some("gpt-6-luna"), 0).expect("openai");
+        let labels: Vec<_> = openai.accounts[0]
+            .windows
+            .iter()
+            .map(UsageWindow::display_label)
+            .collect();
+        assert_eq!(labels, ["5h", "7d"]);
+    }
+
+    #[test]
+    fn ocx_hub_credits_usd_wins_over_the_label() {
+        let value = json!({"reports": [{
+            "provider": "openrouter",
+            "quota": {
+                "creditsUsd": {"used": 2.5, "limit": 10.0, "remaining": 7.5, "percent": 25.0},
+                "customWindows": [{"label": "API credits ($7.50 of $10.00 remaining)", "percent": 25.0}]
+            }
+        }]});
+        let usage = parse_ocx_hub_quotas(&value, "ocx", Some("openrouter/x"), 0).expect("credits");
+        assert_eq!(usage.accounts[0].windows[0].display_label(), "$7.50/$10.00");
+        assert_eq!(usage.accounts[0].windows[0].remaining_percent, 75.0);
     }
 }

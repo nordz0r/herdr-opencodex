@@ -79,7 +79,7 @@ printf '%s\n' "$HOME/.opencodex/hub-admin-api-token" > "$CFG/ocx-hub-admin-token
 herdr plugin action invoke nordz0r.agent-quota.refresh
 ```
 
-Pane models map to hub reports: `grok*` → xAI (weekly only), `gpt*`/`codex` → OpenAI (5h+7d), `glm`/`zai` → Zai, `gemini*` → Google Antigravity (`customWindows` Gem / Gem Weekly). Cache keys are `ocx/{family}` so those panes do not share one snapshot.
+Pane models map to hub reports: `grok*` → xAI (weekly only), `gpt*`/`codex` → OpenAI (5h+7d), `glm`/`zai` → Zai, `gemini*` → Google Antigravity (`customWindows` Gem / Gem Weekly). `openrouter/*` → OpenRouter API credits, shown as remaining `$left/$limit` plus percent instead of 5h/7d. Cache keys are `ocx/{family}` so those panes do not share one snapshot.
 
 Full settings, layouts, and other collectors: [herdr-agent-quota/README.md](herdr-agent-quota/README.md).
 
