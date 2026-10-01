@@ -81,6 +81,36 @@ herdr plugin action invoke nordz0r.agent-quota.refresh
 
 Pane models map to hub reports: `grok*` → xAI (weekly only), `gpt*`/`codex` → OpenAI (5h+7d), `glm`/`zai` → Zai, `gemini*` → Google Antigravity (`customWindows` Gem / Gem Weekly). `openrouter/*` → OpenRouter API credits, shown as remaining `$left/$limit` plus percent instead of 5h/7d. Cache keys are `ocx/{family}` so those panes do not share one snapshot.
 
+### Update, configure, verify
+
+Herdr has no `plugin update`: reinstalling replaces the managed checkout, runs `cargo build --release` again, and keeps the plugin's config and state. Reinstall does not run the startup hook, so refresh afterwards (a Herdr restart also works):
+
+```bash
+herdr plugin install nordz0r/herdr-opencodex/herdr-agent-quota --ref main --yes
+herdr plugin action invoke configure --plugin nordz0r.agent-quota   # sidebar rows + watcher
+herdr plugin action invoke refresh --plugin nordz0r.agent-quota
+```
+
+Configuration lives in `herdr plugin config-dir nordz0r.agent-quota`, one value per file:
+
+| File / env | Value |
+| --- | --- |
+| `ocx-hub-url` / `HERDR_AGENT_QUOTA_OCX_HUB_URL` | Hub **management** origin (default `https://ocx.goldfinches.ru`). `/api/*` must be reachable there; an edge that only publishes the data plane answers `403 Forbidden`. |
+| `ocx-hub-admin-token-file` / `HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN` | Path to a 0600 file with the hub admin token (default `~/.opencodex/hub-admin-api-token`). The env var holds the token itself; use it only for a manual run. |
+
+Verify (prints status and report names, never the token):
+
+```bash
+CFG="$(herdr plugin config-dir nordz0r.agent-quota)"
+herdr plugin list            # nordz0r.agent-quota ... [github:…@main]; no second quota plugin such as herdr-agent-usage
+printf 'Authorization: Bearer %s\n' "$(cat "$(cat "$CFG/ocx-hub-admin-token-file" 2>/dev/null || echo ~/.opencodex/hub-admin-api-token)")" \
+  | curl -sS -o /tmp/ocx-quotas.json -w 'HTTP %{http_code}\n' -H @- "$(cat "$CFG/ocx-hub-url" 2>/dev/null || echo https://ocx.goldfinches.ru)/api/provider-quotas"
+jq -r '.reports[].provider' /tmp/ocx-quotas.json   # expect HTTP 200 and e.g. openai, openrouter
+herdr plugin log list --plugin nordz0r.agent-quota --limit 5
+```
+
+With `HTTP 200` and an `openrouter` report, an `ocx/openrouter/…` pane shows `$0.87/$1.00 87%` after a refresh; `gpt*` panes show 5h/7d.
+
 Full settings, layouts, and other collectors: [herdr-agent-quota/README.md](herdr-agent-quota/README.md).
 
 ## Trust
