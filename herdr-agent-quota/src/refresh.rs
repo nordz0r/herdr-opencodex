@@ -1949,6 +1949,107 @@ mod tests {
     }
 
     #[test]
+    fn an_ocx_openrouter_pane_shows_remaining_credits() {
+        let directory = tempdir().unwrap();
+        let cache = CacheStore::new(directory.path());
+        let target = BillingTarget::omp("ocx/openrouter");
+        let model = "openrouter/deepseek/deepseek-v3.2";
+        let evidence = crate::omp::OmpEvidence {
+            paths: crate::omp::OmpPaths {
+                agent_dir: directory.path().join(".omp/agent"),
+                sessions: directory.path().join(".omp/agent/sessions"),
+            },
+            provider_id: "ocx".to_string(),
+            model_id: Some(model.to_string()),
+            account_pin: None,
+        };
+        let payload: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/ocx/provider-quotas-openrouter.json"
+        ))
+        .unwrap();
+        let usage = omp_provider::parse_ocx_hub_quotas(&payload, "ocx", Some(model), 100)
+            .expect("openrouter credits");
+        let account = omp_provider::select_account(&usage, None).expect("hub account");
+        let snapshot = omp_provider::snapshot(&target, account);
+        let update = omp_quota_with_refresh(
+            &cache,
+            &target,
+            &evidence,
+            100,
+            RowStyle::default(),
+            false,
+            |_, _, _, _| OmpUsage::Account(Box::new(snapshot)),
+        )
+        .expect("credits update");
+        let PaneQuotaUpdate::Replace(values) = update else {
+            panic!("expected replacement");
+        };
+        assert_eq!(values.quota_week, "$0.87/$1.00 87%");
+        assert_eq!(values.quota_5h, "");
+        assert_eq!(values.quota_error, None);
+        assert_eq!(values.quota_headroom, Some(87));
+    }
+
+    #[test]
+    fn an_ocx_openrouter_credit_line_follows_the_used_style() {
+        let payload: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/ocx/provider-quotas-openrouter.json"
+        ))
+        .unwrap();
+        let target = BillingTarget::omp("ocx/openrouter");
+        let usage = omp_provider::parse_ocx_hub_quotas(
+            &payload,
+            "ocx",
+            Some("openrouter/deepseek/deepseek-v3.2"),
+            100,
+        )
+        .expect("openrouter credits");
+        let snapshot = omp_provider::snapshot(&target, &usage.accounts[0]);
+        let used = tokens_for_provider(
+            Some(&snapshot),
+            100,
+            None,
+            RowStyle::new(PercentStyle::Used, Default::default()),
+        )
+        .expect("tokens");
+        assert_eq!(used.quota_week, "$0.13/$1.00 13%");
+    }
+
+    #[test]
+    fn an_ocx_openrouter_pane_without_credits_is_explicit_on_the_first_fetch() {
+        let directory = tempdir().unwrap();
+        let cache = CacheStore::new(directory.path());
+        let target = BillingTarget::omp("ocx/openrouter");
+        let evidence = crate::omp::OmpEvidence {
+            paths: crate::omp::OmpPaths {
+                agent_dir: directory.path().join(".omp/agent"),
+                sessions: directory.path().join(".omp/agent/sessions"),
+            },
+            provider_id: "ocx".to_string(),
+            model_id: Some("openrouter/deepseek/deepseek-v3.2".to_string()),
+            account_pin: None,
+        };
+        let update = omp_quota_with_refresh(
+            &cache,
+            &target,
+            &evidence,
+            100,
+            RowStyle::default(),
+            false,
+            |_, _, _, _| OmpUsage::Unavailable,
+        )
+        .expect("explicit unavailable update");
+        let PaneQuotaUpdate::Replace(values) = update else {
+            panic!("expected replacement");
+        };
+        assert_eq!(values.quota_week, "7d N/A");
+        assert_eq!(
+            values.quota_error.as_deref(),
+            Some("omp reported no quota data")
+        );
+    }
+
+    #[test]
     fn an_omp_failed_first_fetch_is_debounced_without_a_snapshot() {
         let directory = tempdir().unwrap();
         let cache = CacheStore::new(directory.path());

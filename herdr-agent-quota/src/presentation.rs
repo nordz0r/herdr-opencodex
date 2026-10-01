@@ -520,12 +520,24 @@ fn format_window(
     } else {
         String::new()
     };
-    let label = format!("{} {percent}{suffix}", window.display_label());
+    let label = format!("{} {percent}{suffix}", window_label(window, style));
     let Some(reset) = window.resets_at else {
         return label;
     };
     let eta = format_reset_eta(reset, now_unix);
     format!("{label} reset {eta}")
+}
+
+/// A credit balance names the same side of the ledger as its percent
+/// (`$0.87/$1.00 87%` remaining, `$0.13/$1.00 13%` used).
+fn window_label(window: &UsageWindow, style: PercentStyle) -> String {
+    match window.credit_limit_usd {
+        Some(limit) => format!(
+            "${:.2}/${limit:.2}",
+            limit * style.percent_of(window) / 100.0
+        ),
+        None => window.display_label().to_string(),
+    }
 }
 
 struct WindowParts {
@@ -559,7 +571,8 @@ fn compact_window_parts(
     style: PercentStyle,
     shape: SidebarShape,
 ) -> WindowParts {
-    let label = window.display_label();
+    let label = window_label(window, style);
+    let label = label.as_str();
     let percent = style.percent_of(window);
     let eta = window
         .resets_at

@@ -1,0 +1,19 @@
+{
+  "generatedAt": 1790011490020,
+  "reports": [
+    {
+      "provider": "openai",
+      "updatedAt": 1790011490020,
+      "quota": {"fiveHourPercent": 40.0, "weeklyPercent": 66.0, "updatedAt": 1790011490020}
+    },
+    {
+      "provider": "openrouter",
+      "updatedAt": 1790011490020,
+      "quota": {
+        "customWindows": [{"label": "API credits ($0.87 of $1.00 remaining)", "percent": 13}],
+        "updatedAt": 1790011490020
+      },
+      "routingQuota": {"state": "available", "updatedAt": 1790011490020, "validUntil": 1790013290020}
+    }
+  ]
+}
