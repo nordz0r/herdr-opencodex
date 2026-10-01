@@ -59,10 +59,14 @@ pub enum Command {
     Focus,
     /// Render the quota dashboard shown in the Herdr popup pane.
     Dashboard,
-    /// Diagnose the OCX hub lookup used by `ocx/...` panes: hub URL, token
+    /// Diagnose an omp pane's quota path: `omp usage` exit status and account
+    /// count, whether the provider falls back to the OCX hub, hub URL, token
     /// presence (never its value), HTTP status, report names, and what the
-    /// sidebar would show for `--model`. Read-only.
+    /// sidebar would show for `--model`. Read-only; exits 1 on any failure.
     HubCheck {
+        /// omp provider id of the pane (`ocx` for OCX API-key panes).
+        #[arg(long, default_value = "ocx")]
+        provider: String,
         /// Pane model as OCX names it, e.g. `openrouter/deepseek/deepseek-v3.2`.
         #[arg(long)]
         model: Option<String>,

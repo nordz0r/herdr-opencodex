@@ -19,10 +19,15 @@ fn main() -> Result<()> {
         Command::Event => herdr_agent_quota::refresh::event(),
         Command::Focus => herdr_agent_quota::refresh::focus(),
         Command::Dashboard => herdr_agent_quota::dashboard::run(),
-        Command::HubCheck { model } => {
+        Command::HubCheck { provider, model } => {
             let now = herdr_agent_quota::cache::CacheStore::now_unix();
-            for line in herdr_agent_quota::providers::omp::ocx_hub_check(model.as_deref(), now) {
+            let (lines, ok) =
+                herdr_agent_quota::providers::omp::ocx_hub_check(&provider, model.as_deref(), now);
+            for line in lines {
                 println!("{line}");
+            }
+            if !ok {
+                std::process::exit(1);
             }
             Ok(())
         }
