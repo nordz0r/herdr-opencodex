@@ -125,18 +125,129 @@ fn ocx_hub_provider(provider_id: &str) -> bool {
 }
 
 fn ocx_hub_credentials() -> Option<(String, String)> {
-    let token = std::env::var("HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN")
+    let (base_url, _) = ocx_hub_url();
+    let (token, _) = ocx_hub_token();
+    Some((base_url, token?))
+}
+
+/// The hub token and where it came from. The source names an env var or a
+/// path, never the value.
+fn ocx_hub_token() -> (Option<String>, String) {
+    if let Some(token) = std::env::var("HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| read_secret_file(&ocx_hub_token_path()?))?;
-    let base_url = std::env::var("HERDR_AGENT_QUOTA_OCX_HUB_URL")
+    {
+        return (
+            Some(token),
+            "env HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN".to_string(),
+        );
+    }
+    let Some(path) = ocx_hub_token_path() else {
+        return (None, "no home directory".to_string());
+    };
+    (read_secret_file(&path), format!("file {}", path.display()))
+}
+
+fn ocx_hub_url() -> (String, &'static str) {
+    if let Some(url) = std::env::var("HERDR_AGENT_QUOTA_OCX_HUB_URL")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| read_pref_line("ocx-hub-url"))
-        .unwrap_or_else(|| "https://ocx.goldfinches.ru".to_string());
-    Some((base_url, token))
+    {
+        return (url, "env HERDR_AGENT_QUOTA_OCX_HUB_URL");
+    }
+    match read_pref_line("ocx-hub-url") {
+        Some(url) => (url, "config ocx-hub-url"),
+        None => ("https://ocx.goldfinches.ru".to_string(), "default"),
+    }
+}
+
+/// `hub-check`: what an OCX pane's hub lookup sees, without printing the token.
+pub fn ocx_hub_check(model_id: Option<&str>, now_unix: u64) -> Vec<String> {
+    let (base_url, url_source) = ocx_hub_url();
+    let (token, token_source) = ocx_hub_token();
+    let mut lines = vec![
+        format!("hub url: {base_url} ({url_source})"),
+        format!(
+            "hub token: {} ({token_source})",
+            if token.is_some() {
+                "present"
+            } else {
+                "missing"
+            }
+        ),
+    ];
+    let Some(token) = token else {
+        return lines;
+    };
+    let url = format!("{}/api/provider-quotas", base_url.trim_end_matches('/'));
+    let response = ureq::get(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("X-OpenCodex-API-Key", &token)
+        .set("Accept", "application/json")
+        .timeout(Duration::from_secs(8))
+        .call();
+    let value = match response {
+        Ok(response) => {
+            lines.push(format!(
+                "GET /api/provider-quotas: HTTP {}",
+                response.status()
+            ));
+            match response.into_json::<Value>() {
+                Ok(value) => value,
+                Err(_) => {
+                    lines.push("response is not JSON".to_string());
+                    return lines;
+                }
+            }
+        }
+        Err(ureq::Error::Status(status, _)) => {
+            lines.push(format!("GET /api/provider-quotas: HTTP {status}"));
+            return lines;
+        }
+        Err(ureq::Error::Transport(transport)) => {
+            lines.push(format!("GET /api/provider-quotas: {}", transport.kind()));
+            return lines;
+        }
+    };
+    lines.extend(describe_ocx_hub_payload(&value, model_id, now_unix));
+    lines
+}
+
+/// Report names in the payload, and what the sidebar would render for `model_id`.
+fn describe_ocx_hub_payload(value: &Value, model_id: Option<&str>, now_unix: u64) -> Vec<String> {
+    let names: Vec<&str> = value
+        .get("reports")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|report| report.get("provider").and_then(Value::as_str))
+        .collect();
+    let mut lines = vec![format!("reports: {}", names.join(", "))];
+    let Some(model_id) = model_id else {
+        return lines;
+    };
+    let family = hub_quota_provider_name("ocx", Some(model_id));
+    let rendered = parse_ocx_hub_quotas(value, "ocx", Some(model_id), now_unix).map(|usage| {
+        let target = BillingTarget::omp(&format!("ocx/{family}"));
+        crate::presentation::MetadataTokens::from_snapshot(
+            &snapshot(&target, &usage.accounts[0]),
+            now_unix,
+        )
+    });
+    lines.push(match rendered {
+        Some(tokens) => format!(
+            "model {model_id} -> report {family}: 5h \"{}\" 7d \"{}\"",
+            tokens.quota_5h, tokens.quota_week
+        ),
+        None if !names.contains(&family) => {
+            format!("model {model_id} -> report {family}: missing from the hub payload")
+        }
+        None => format!("model {model_id} -> report {family}: no usable windows or credits"),
+    });
+    lines
 }
 
 fn ocx_hub_token_path() -> Option<PathBuf> {
@@ -1179,5 +1290,24 @@ mod tests {
         for value in &unusable {
             assert_eq!(openrouter_credits(value), None, "{value}");
         }
+    }
+
+    #[test]
+    fn hub_check_describes_what_an_openrouter_pane_would_render() {
+        let value: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/ocx/provider-quotas-openrouter.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            describe_ocx_hub_payload(&value, Some("openrouter/deepseek/deepseek-v3.2"), 0),
+            [
+                "reports: openai, openrouter",
+                "model openrouter/deepseek/deepseek-v3.2 -> report openrouter: 5h \"\" 7d \"$0.87/$1.00 87%\"",
+            ]
+        );
+        assert_eq!(
+            describe_ocx_hub_payload(&value, Some("grok-4.6"), 0)[1],
+            "model grok-4.6 -> report xai: missing from the hub payload"
+        );
     }
 }

@@ -14,6 +14,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   e.g. `$0.87/$1.00 87%` (`$0.13/$1.00 13%` with the `used` percent style).
   5h/7d providers are unchanged.
 
+### Added
+
+- `herdr-agent-quota hub-check [--model ID]` diagnoses the OCX hub lookup
+  behind `quota account is not confirmed` on `ocx/…` panes: hub URL and its
+  source, whether a token was found (never its value), the HTTP status of
+  `GET /api/provider-quotas`, the report names, and what the sidebar would
+  render for the model.
+
 ## [1.6.1] - 2026-09-26
 
 ### Added

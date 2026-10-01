@@ -59,6 +59,14 @@ pub enum Command {
     Focus,
     /// Render the quota dashboard shown in the Herdr popup pane.
     Dashboard,
+    /// Diagnose the OCX hub lookup used by `ocx/...` panes: hub URL, token
+    /// presence (never its value), HTTP status, report names, and what the
+    /// sidebar would show for `--model`. Read-only.
+    HubCheck {
+        /// Pane model as OCX names it, e.g. `openrouter/deepseek/deepseek-v3.2`.
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Install, inspect, or remove this plugin's sidebar rows and collectors.
     ///
     /// With no flag this only reports what would change. Use `--agent` to work

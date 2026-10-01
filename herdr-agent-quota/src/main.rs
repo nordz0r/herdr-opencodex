@@ -19,6 +19,13 @@ fn main() -> Result<()> {
         Command::Event => herdr_agent_quota::refresh::event(),
         Command::Focus => herdr_agent_quota::refresh::focus(),
         Command::Dashboard => herdr_agent_quota::dashboard::run(),
+        Command::HubCheck { model } => {
+            let now = herdr_agent_quota::cache::CacheStore::now_unix();
+            for line in herdr_agent_quota::providers::omp::ocx_hub_check(model.as_deref(), now) {
+                println!("{line}");
+            }
+            Ok(())
+        }
         Command::Settings => herdr_agent_quota::settings::run(),
         Command::Configure {
             check,
