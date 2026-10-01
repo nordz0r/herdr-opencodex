@@ -125,18 +125,260 @@ fn ocx_hub_provider(provider_id: &str) -> bool {
 }
 
 fn ocx_hub_credentials() -> Option<(String, String)> {
-    let token = std::env::var("HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN")
+    let (base_url, _) = ocx_hub_url();
+    let (token, _) = ocx_hub_token();
+    Some((base_url, token?))
+}
+
+/// The hub token and where it came from. The source names an env var or a
+/// path, never the value.
+fn ocx_hub_token() -> (Option<String>, String) {
+    if let Some(token) = std::env::var("HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| read_secret_file(&ocx_hub_token_path()?))?;
-    let base_url = std::env::var("HERDR_AGENT_QUOTA_OCX_HUB_URL")
+    {
+        return (
+            Some(token),
+            "env HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN".to_string(),
+        );
+    }
+    let Some(path) = ocx_hub_token_path() else {
+        return (None, "no home directory".to_string());
+    };
+    (read_secret_file(&path), format!("file {}", path.display()))
+}
+
+fn ocx_hub_url() -> (String, &'static str) {
+    if let Some(url) = std::env::var("HERDR_AGENT_QUOTA_OCX_HUB_URL")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| read_pref_line("ocx-hub-url"))
-        .unwrap_or_else(|| "https://ocx.goldfinches.ru".to_string());
-    Some((base_url, token))
+    {
+        return (url, "env HERDR_AGENT_QUOTA_OCX_HUB_URL");
+    }
+    match read_pref_line("ocx-hub-url") {
+        Some(url) => (url, "config ocx-hub-url"),
+        None => ("https://ocx.goldfinches.ru".to_string(), "default"),
+    }
+}
+
+/// Inputs for `hub-check`, resolved from env/config by [`ocx_hub_check`] and
+/// given directly by tests.
+pub struct HubCheck<'a> {
+    pub provider_id: &'a str,
+    pub model_id: Option<&'a str>,
+    pub omp_bin: OsString,
+    pub base_url: String,
+    pub url_source: &'a str,
+    pub token: Option<String>,
+    pub token_source: String,
+    pub now_unix: u64,
+}
+
+/// `hub-check`: the two legs a pane's quota goes through, `omp usage` and the
+/// OCX hub, without printing the token. Read-only. Returns the report lines and
+/// whether every checked leg succeeded.
+pub fn ocx_hub_check(
+    provider_id: &str,
+    model_id: Option<&str>,
+    now_unix: u64,
+) -> (Vec<String>, bool) {
+    let (base_url, url_source) = ocx_hub_url();
+    let (token, token_source) = ocx_hub_token();
+    ocx_hub_check_with(HubCheck {
+        provider_id,
+        model_id,
+        omp_bin: std::env::var_os("HERDR_AGENT_QUOTA_OMP_BIN").unwrap_or_else(|| "omp".into()),
+        base_url,
+        url_source,
+        token,
+        token_source,
+        now_unix,
+    })
+}
+
+pub fn ocx_hub_check_with(check: HubCheck<'_>) -> (Vec<String>, bool) {
+    let mut lines = Vec::new();
+    let mut ok = true;
+
+    // Leg 1: the hub is consulted only when omp succeeds with no account.
+    let eligible = ocx_hub_provider(check.provider_id);
+    lines.push(format!(
+        "provider {}: {}",
+        check.provider_id,
+        if eligible {
+            "hub fallback enabled"
+        } else {
+            "not routed to the hub"
+        }
+    ));
+    #[cfg(windows)]
+    let omp_bin = crate::process::resolve_program(&check.omp_bin);
+    #[cfg(not(windows))]
+    let omp_bin = check.omp_bin;
+    let output = Command::new(omp_bin)
+        .args(["usage", "--json", "--provider", check.provider_id])
+        .output();
+    let mut hub_used = eligible;
+    match output {
+        Err(error) => {
+            ok = false;
+            lines.push(format!("omp usage: cannot run ({})", error.kind()));
+        }
+        Ok(output) if !output.status.success() => {
+            ok = false;
+            let code = output
+                .status
+                .code()
+                .map_or_else(|| "signal".to_string(), |code| code.to_string());
+            lines.push(format!("omp usage: exit {code} (pane shows not confirmed)"));
+        }
+        Ok(output) => match serde_json::from_slice::<Value>(&output.stdout) {
+            Err(_) => {
+                ok = false;
+                lines.push("omp usage: exit 0, output is not JSON".to_string());
+            }
+            Ok(value) => {
+                let usage = parse_usage(&value, check.provider_id, check.now_unix);
+                let pinned = usage.accounts.iter().filter(|a| a.pin.is_some()).count();
+                lines.push(format!(
+                    "omp usage: exit 0, accounts {} (with pin {pinned}), api key {}, oauth without usage {}",
+                    usage.accounts.len(),
+                    if usage.has_api_key { "yes" } else { "no" },
+                    usage.oauth_without_usage_pins.len()
+                ));
+                if !usage.accounts.is_empty() {
+                    hub_used = false;
+                    lines.push(
+                        "omp reports accounts itself, so the hub is not consulted; several accounts need the pane's pin"
+                            .to_string(),
+                    );
+                }
+            }
+        },
+    }
+
+    // Leg 2: the hub itself.
+    lines.push(format!(
+        "hub url: {} ({})",
+        redact_url(&check.base_url),
+        check.url_source
+    ));
+    lines.push(format!(
+        "hub token: {} ({})",
+        if check.token.is_some() {
+            "present"
+        } else {
+            "missing"
+        },
+        check.token_source
+    ));
+    let Some(token) = check.token else {
+        return (lines, false);
+    };
+    let url = format!(
+        "{}/api/provider-quotas",
+        check.base_url.trim_end_matches('/')
+    );
+    let response = ureq::get(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("X-OpenCodex-API-Key", &token)
+        .set("Accept", "application/json")
+        .timeout(Duration::from_secs(8))
+        .call();
+    let value = match response {
+        // The pane accepts exactly 200, so the check does too.
+        Ok(response) if response.status() == 200 => {
+            lines.push("GET /api/provider-quotas: HTTP 200".to_string());
+            match response.into_json::<Value>() {
+                Ok(value) => value,
+                Err(_) => {
+                    lines.push("response is not JSON".to_string());
+                    return (lines, false);
+                }
+            }
+        }
+        Ok(response) => {
+            lines.push(format!(
+                "GET /api/provider-quotas: HTTP {}",
+                response.status()
+            ));
+            return (lines, false);
+        }
+        Err(ureq::Error::Status(status, _)) => {
+            lines.push(format!("GET /api/provider-quotas: HTTP {status}"));
+            return (lines, false);
+        }
+        Err(ureq::Error::Transport(transport)) => {
+            lines.push(format!("GET /api/provider-quotas: {}", transport.kind()));
+            return (lines, false);
+        }
+    };
+    let (described, rendered) =
+        describe_ocx_hub_payload(&value, check.provider_id, check.model_id, check.now_unix);
+    lines.extend(described);
+    if check.model_id.is_some() && !rendered && hub_used {
+        ok = false;
+    }
+    (lines, ok)
+}
+
+/// Drop `user:pass@` and any query or fragment before a URL is printed.
+fn redact_url(url: &str) -> String {
+    let url = url.split(['?', '#']).next().unwrap_or_default();
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let (authority, path) = rest.find('/').map_or((rest, ""), |at| rest.split_at(at));
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if scheme.is_empty() {
+        format!("{host}{path}")
+    } else {
+        format!("{scheme}://{host}{path}")
+    }
+}
+
+/// Report names in the payload, and what the sidebar would render for `model_id`.
+fn describe_ocx_hub_payload(
+    value: &Value,
+    provider_id: &str,
+    model_id: Option<&str>,
+    now_unix: u64,
+) -> (Vec<String>, bool) {
+    let names: Vec<&str> = value
+        .get("reports")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|report| report.get("provider").and_then(Value::as_str))
+        .collect();
+    let mut lines = vec![format!("reports: {}", names.join(", "))];
+    let Some(model_id) = model_id else {
+        return (lines, false);
+    };
+    let family = hub_quota_provider_name(provider_id, Some(model_id));
+    let rendered =
+        parse_ocx_hub_quotas(value, provider_id, Some(model_id), now_unix).map(|usage| {
+            let target = BillingTarget::omp(&format!("ocx/{family}"));
+            crate::presentation::MetadataTokens::from_snapshot(
+                &snapshot(&target, &usage.accounts[0]),
+                now_unix,
+            )
+        });
+    let found = rendered.is_some();
+    lines.push(match rendered {
+        Some(tokens) => format!(
+            "model {model_id} -> report {family}: 5h \"{}\" 7d \"{}\"",
+            tokens.quota_5h, tokens.quota_week
+        ),
+        None if !names.contains(&family) => {
+            format!("model {model_id} -> report {family}: missing from the hub payload")
+        }
+        None => format!("model {model_id} -> report {family}: no usable windows or credits"),
+    });
+    (lines, found)
 }
 
 fn ocx_hub_token_path() -> Option<PathBuf> {
@@ -1179,5 +1421,175 @@ mod tests {
         for value in &unusable {
             assert_eq!(openrouter_credits(value), None, "{value}");
         }
+    }
+
+    #[test]
+    fn hub_check_describes_what_an_openrouter_pane_would_render() {
+        let value: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/ocx/provider-quotas-openrouter.json"
+        ))
+        .unwrap();
+        let (lines, rendered) =
+            describe_ocx_hub_payload(&value, "ocx", Some("openrouter/deepseek/deepseek-v3.2"), 0);
+        assert!(rendered);
+        assert_eq!(
+            lines,
+            [
+                "reports: openai, openrouter",
+                "model openrouter/deepseek/deepseek-v3.2 -> report openrouter: 5h \"\" 7d \"$0.87/$1.00 87%\"",
+            ]
+        );
+        let (lines, rendered) = describe_ocx_hub_payload(&value, "ocx", Some("grok-4.6"), 0);
+        assert!(!rendered);
+        assert_eq!(
+            lines[1],
+            "model grok-4.6 -> report xai: missing from the hub payload"
+        );
+        let empty = json!({"reports": [{"provider": "openrouter", "quota": {"updatedAt": 1}}]});
+        let (lines, rendered) = describe_ocx_hub_payload(&empty, "ocx", Some("openrouter/x"), 0);
+        assert!(!rendered);
+        assert_eq!(
+            lines[1],
+            "model openrouter/x -> report openrouter: no usable windows or credits"
+        );
+    }
+
+    #[test]
+    fn hub_check_url_drops_credentials_and_query() {
+        assert_eq!(
+            redact_url("http://user:pw@127.0.0.1:18081/?k=q"),
+            "http://127.0.0.1:18081/"
+        );
+        assert_eq!(
+            redact_url("https://hub.example/base"),
+            "https://hub.example/base"
+        );
+    }
+
+    const TOKEN: &str = "test-secret-token-value";
+
+    /// One canned HTTP response from a local listener; no live network.
+    fn mock_hub(status_line: &'static str, body: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        format!("http://user:pw@{address}")
+    }
+
+    #[cfg(unix)]
+    fn omp_stub(dir: &Path, script: &str) -> OsString {
+        use std::os::unix::fs::PermissionsExt;
+        let stub = dir.join("omp");
+        std::fs::write(&stub, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        stub.into_os_string()
+    }
+
+    #[cfg(unix)]
+    fn run_check(omp: OsString, base_url: String, token: Option<&str>) -> (Vec<String>, bool) {
+        ocx_hub_check_with(HubCheck {
+            provider_id: "ocx",
+            model_id: Some("openrouter/deepseek/deepseek-v3.2"),
+            omp_bin: omp,
+            base_url,
+            url_source: "test",
+            token: token.map(str::to_string),
+            token_source: "test".to_string(),
+            now_unix: 0,
+        })
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn hub_check_reports_each_failure_without_leaking_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty_omp = omp_stub(
+            dir.path(),
+            "echo '{\"reports\":[],\"accountsWithoutUsage\":[]}'",
+        );
+        let fixture = include_str!("../../tests/fixtures/ocx/provider-quotas-openrouter.json");
+        let leaked = |lines: &[String]| lines.join("\n").contains(TOKEN);
+
+        // Healthy: both legs pass, and the URL is printed without userinfo.
+        let (lines, ok) = run_check(empty_omp.clone(), mock_hub("200 OK", fixture), Some(TOKEN));
+        assert!(ok, "{lines:?}");
+        assert!(lines
+            .iter()
+            .any(|line| line.ends_with("7d \"$0.87/$1.00 87%\"")));
+        assert!(lines.iter().all(|line| !line.contains("user:pw")));
+        assert!(!leaked(&lines));
+
+        // No token: no request, failure.
+        let (lines, ok) = run_check(empty_omp.clone(), "http://127.0.0.1:9".to_string(), None);
+        assert!(!ok);
+        assert!(lines.iter().any(|line| line == "hub token: missing (test)"));
+
+        // 401/403 bodies that echo the token are never printed.
+        for status in ["401 Unauthorized", "403 Forbidden"] {
+            let (lines, ok) = run_check(
+                empty_omp.clone(),
+                mock_hub(status, "{\"error\":\"bad token test-secret-token-value\"}"),
+                Some(TOKEN),
+            );
+            assert!(!ok);
+            let code = &status[..3];
+            assert!(lines.contains(&format!("GET /api/provider-quotas: HTTP {code}")));
+            assert!(!leaked(&lines));
+        }
+
+        // A 200 that is not JSON.
+        let (lines, ok) = run_check(empty_omp.clone(), mock_hub("200 OK", "<html>"), Some(TOKEN));
+        assert!(!ok);
+        assert!(lines.iter().any(|line| line == "response is not JSON"));
+
+        // Network error: a port nothing listens on.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = closed.local_addr().unwrap();
+        drop(closed);
+        let (lines, ok) = run_check(empty_omp, format!("http://{address}"), Some(TOKEN));
+        assert!(!ok);
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("GET /api/provider-quotas: ") && !line.contains("HTTP")));
+        assert!(!leaked(&lines));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn hub_check_reports_the_omp_leg() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = include_str!("../../tests/fixtures/ocx/provider-quotas-openrouter.json");
+
+        // omp failing is a failure even when the hub is healthy.
+        let failing = omp_stub(dir.path(), "exit 3");
+        let (lines, ok) = run_check(failing, mock_hub("200 OK", fixture), Some(TOKEN));
+        assert!(!ok);
+        assert!(lines.contains(&"omp usage: exit 3 (pane shows not confirmed)".to_string()));
+        assert_eq!(lines[0], "provider ocx: hub fallback enabled");
+
+        // omp reporting accounts itself means the hub is not consulted.
+        let accounts = serde_json::to_string(&anthropic_report())
+            .unwrap()
+            .replace("anthropic", "ocx");
+        let dir = tempfile::tempdir().unwrap();
+        let with_accounts = omp_stub(dir.path(), &format!("cat <<'JSON'\n{accounts}\nJSON"));
+        let (lines, _) = run_check(with_accounts, mock_hub("200 OK", fixture), Some(TOKEN));
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("omp usage: exit 0, accounts 1 (with pin 1)")));
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("omp reports accounts itself")));
     }
 }

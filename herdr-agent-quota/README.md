@@ -134,7 +134,8 @@ A data-plane `ocx_data_*` key gets 401. Never commit or print it.
 
 Pane models map to hub reports: `grok*` → `xai` (weekly only), `gpt*`/`codex`
 → `openai` (5h+7d), `glm`/`zai` → `zai`, `gemini*` → `google-antigravity`
-(`customWindows` Gem / Gem Weekly). Cache keys are `ocx/{family}` so those
+(`customWindows` Gem / Gem Weekly), `openrouter/*` → `openrouter` (API credits,
+shown as `$left/$limit 87%`). Cache keys are `ocx/{family}` so those
 panes do not share one snapshot.
 
 ## Troubleshooting
@@ -145,6 +146,7 @@ panes do not share one snapshot.
 | Claude/Agy quota is missing | Send a turn so the session's StatusLine produces an observation |
 | OMP quota is missing | Check `omp usage --json --redact --provider <id>` |
 | OMP OCX remaining is `N/A` | Put a hub **admin** token in `~/.opencodex/hub-admin-api-token` (mode 0600) and `ocx-hub-url` / `ocx-hub-admin-token-file` under `herdr plugin config-dir nordz0r.agent-quota`. A data-plane `ocx_data_*` key cannot read remaining. |
+| OMP OCX pane says `quota account is not confirmed` | Run `HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir nordz0r.agent-quota)" "$(herdr plugin list --json \| jq -r '.. \| objects \| select(.plugin_id? == "nordz0r.agent-quota") \| .plugin_root')/target/release/herdr-agent-quota" hub-check --provider ocx --model <pane model>`. It runs `omp usage --json --provider <id>` (omp's default profile) and prints its exit status and account count, whether that provider falls back to the hub, the hub URL (without credentials or query), whether a token was found (never its value), the HTTP status, the report names, and what the sidebar would show. Exits 1 if any step fails |
 | Devin quota is missing | Check the CLI login and `DEVIN_CREDENTIALS_FILE` if customized |
 | Rows are missing | Run the configure action below to repair managed configuration |
 | The `gauges` meter disappears on a narrow sidebar | Expected below ~24 columns; widen the sidebar and refresh |

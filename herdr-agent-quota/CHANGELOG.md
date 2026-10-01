@@ -14,6 +14,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   e.g. `$0.87/$1.00 87%` (`$0.13/$1.00 13%` with the `used` percent style).
   5h/7d providers are unchanged.
 
+### Added
+
+- `herdr-agent-quota hub-check [--provider ID] [--model ID]` diagnoses
+  `quota account is not confirmed` on omp panes: the exit status and account
+  count of `omp usage --json --provider ID`, whether that provider falls back
+  to the OCX hub, the hub URL (credentials and query removed), whether a token
+  was found (never its value), the HTTP status of `GET /api/provider-quotas`,
+  the report names, and what the sidebar would render for the model. Exits 1
+  when any step fails.
+
 ## [1.6.1] - 2026-09-26
 
 ### Added
