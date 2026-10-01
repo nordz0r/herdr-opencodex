@@ -83,12 +83,11 @@ Pane models map to hub reports: `grok*` → xAI (weekly only), `gpt*`/`codex` �
 
 ### Update, configure, verify
 
-Herdr has no `plugin update`: reinstalling replaces the managed checkout, runs `cargo build --release` again, and keeps the plugin's config and state. Reinstall does not run the startup hook, so refresh afterwards (a Herdr restart also works):
+Herdr has no `plugin update`: reinstalling replaces the managed checkout, runs `cargo build --release` again, and keeps the plugin's config and state. Reinstall does not run the startup hook. The `configure` action repairs the sidebar rows, reloads Herdr config, and then runs `startup`, which refreshes every pane and starts the watcher (restarting Herdr does the same):
 
 ```bash
 herdr plugin install nordz0r/herdr-opencodex/herdr-agent-quota --ref main --yes
-herdr plugin action invoke configure --plugin nordz0r.agent-quota   # sidebar rows + watcher
-herdr plugin action invoke refresh --plugin nordz0r.agent-quota
+herdr plugin action invoke configure --plugin nordz0r.agent-quota
 ```
 
 Configuration lives in `herdr plugin config-dir nordz0r.agent-quota`, one value per file:
@@ -98,18 +97,17 @@ Configuration lives in `herdr plugin config-dir nordz0r.agent-quota`, one value 
 | `ocx-hub-url` / `HERDR_AGENT_QUOTA_OCX_HUB_URL` | Hub **management** origin (default `https://ocx.goldfinches.ru`). `/api/*` must be reachable there; an edge that only publishes the data plane answers `403 Forbidden`. |
 | `ocx-hub-admin-token-file` / `HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN` | Path to a 0600 file with the hub admin token (default `~/.opencodex/hub-admin-api-token`). The env var holds the token itself; use it only for a manual run. |
 
-Verify (prints status and report names, never the token):
+Verify with `hub-check`, which checks the same steps the pane does (`omp usage`, then the hub) and never prints the token. It exits 1 if a step fails:
 
 ```bash
-CFG="$(herdr plugin config-dir nordz0r.agent-quota)"
-herdr plugin list            # nordz0r.agent-quota ... [github:…@main]; no second quota plugin such as herdr-agent-usage
-printf 'Authorization: Bearer %s\n' "$(cat "$(cat "$CFG/ocx-hub-admin-token-file" 2>/dev/null || echo ~/.opencodex/hub-admin-api-token)")" \
-  | curl -sS -o /tmp/ocx-quotas.json -w 'HTTP %{http_code}\n' -H @- "$(cat "$CFG/ocx-hub-url" 2>/dev/null || echo https://ocx.goldfinches.ru)/api/provider-quotas"
-jq -r '.reports[].provider' /tmp/ocx-quotas.json   # expect HTTP 200 and e.g. openai, openrouter
+herdr plugin list   # nordz0r.agent-quota … [github:…@main]; no second quota plugin such as herdr-agent-usage
+ROOT="$(herdr plugin list --json | jq -r '.. | objects | select(.plugin_id? == "nordz0r.agent-quota") | .plugin_root')"
+HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir nordz0r.agent-quota)" \
+  "$ROOT/target/release/herdr-agent-quota" hub-check --provider ocx --model openrouter/deepseek/deepseek-v3.2
 herdr plugin log list --plugin nordz0r.agent-quota --limit 5
 ```
 
-With `HTTP 200` and an `openrouter` report, an `ocx/openrouter/…` pane shows `$0.87/$1.00 87%` after a refresh; `gpt*` panes show 5h/7d.
+The last `hub-check` line shows what the pane will render, e.g. `7d "$0.87/$1.00 87%"` for an `ocx/openrouter/…` pane. `gpt*` panes show 5h/7d.
 
 Full settings, layouts, and other collectors: [herdr-agent-quota/README.md](herdr-agent-quota/README.md).
 
