@@ -25,6 +25,14 @@
 
 Это репозиторий **плагинов Herdr** (`herdr-plugin.toml` в корне и в `herdr-agent-quota/`), а не skill для omp. Плагины работают от вашего пользователя, поэтому перед установкой просмотрите манифесты.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/architecture-light.svg">
+    <img alt="herdr-opencodex: ocx-stats читает расход OpenCodex во всплывающее окно; agent-quota читает omp usage и хаб OCX в боковую панель" src=".github/assets/architecture-light.svg" width="100%">
+  </picture>
+</p>
+
 ## Установка
 
 ### Маркетплейс

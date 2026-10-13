@@ -25,6 +25,14 @@ Herdr plugins for [OpenCodex](https://github.com/lidge-jun/opencodex) (`ocx`):
 
 This is a **Herdr plugin** repo (`herdr-plugin.toml` at the root and in `herdr-agent-quota/`), not an omp skill. Plugins run as your user; review the manifests before install.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/architecture-light.svg">
+    <img alt="herdr-opencodex: ocx-stats reads OpenCodex usage into a popup; agent-quota reads omp usage and the OCX hub into the agents sidebar" src=".github/assets/architecture-light.svg" width="100%">
+  </picture>
+</p>
+
 ## Installation
 
 ### Marketplace
