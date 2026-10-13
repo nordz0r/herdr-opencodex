@@ -159,7 +159,7 @@ fn ocx_hub_url() -> (String, &'static str) {
     }
     match read_pref_line("ocx-hub-url") {
         Some(url) => (url, "config ocx-hub-url"),
-        None => ("https://ocx.goldfinches.ru".to_string(), "default"),
+        None => ("https://ocx.example.com".to_string(), "default"),
     }
 }
 

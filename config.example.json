@@ -1,5 +1,5 @@
 {
-  "baseUrl": "https://ocx.goldfinches.ru",
+  "baseUrl": "https://ocx.example.com",
   "apiKey": "REPLACE_WITH_ADMIN_OR_DATA_KEY",
   "range": "1d",
   "logLimit": 8

@@ -123,7 +123,7 @@ management API, not on data-plane `/v1/usage` (spend only).
 
 ```sh
 CFG="$(herdr plugin config-dir nordz0r.agent-quota)"
-printf '%s\n' 'https://ocx.goldfinches.ru' > "$CFG/ocx-hub-url"
+printf '%s\n' 'https://ocx.example.com' > "$CFG/ocx-hub-url"
 printf '%s\n' "$HOME/.opencodex/hub-admin-api-token" > "$CFG/ocx-hub-admin-token-file"
 chmod 600 "$HOME/.opencodex/hub-admin-api-token"
 herdr plugin action invoke nordz0r.agent-quota.refresh
