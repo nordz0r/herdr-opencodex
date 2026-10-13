@@ -114,7 +114,7 @@ Configuration lives in `herdr plugin config-dir nordz0r.agent-quota`, one value 
 
 | File / env | Value |
 | --- | --- |
-| `ocx-hub-url` / `HERDR_AGENT_QUOTA_OCX_HUB_URL` | Hub **management** origin (default `https://ocx.example.com`; set your own). `/api/*` must be reachable there; an edge that only publishes the data plane answers `403 Forbidden`. |
+| `ocx-hub-url` / `HERDR_AGENT_QUOTA_OCX_HUB_URL` | Hub **management** origin (required, no default: without it the hub is not queried and the token is not sent; `hub-check` exits 1). `/api/*` must be reachable there; an edge that only publishes the data plane answers `403 Forbidden`. |
 | `ocx-hub-admin-token-file` / `HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN` | Path to a 0600 file with the hub admin token (default `~/.opencodex/hub-admin-api-token`). The env var holds the token itself; use it only for a manual run. |
 
 Verify with `hub-check`, which checks the same steps the pane does (`omp usage`, then the hub) and never prints the token. It exits 1 if a step fails:

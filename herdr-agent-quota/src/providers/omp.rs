@@ -125,7 +125,8 @@ fn ocx_hub_provider(provider_id: &str) -> bool {
 }
 
 fn ocx_hub_credentials() -> Option<(String, String)> {
-    let (base_url, _) = ocx_hub_url();
+    // No default hub: without a configured URL the admin token goes nowhere.
+    let (base_url, _) = ocx_hub_url()?;
     let (token, _) = ocx_hub_token();
     Some((base_url, token?))
 }
@@ -149,18 +150,17 @@ fn ocx_hub_token() -> (Option<String>, String) {
     (read_secret_file(&path), format!("file {}", path.display()))
 }
 
-fn ocx_hub_url() -> (String, &'static str) {
+/// The hub URL and where it came from. There is no default: the admin token
+/// is sent only to a hub the user configured.
+fn ocx_hub_url() -> Option<(String, &'static str)> {
     if let Some(url) = std::env::var("HERDR_AGENT_QUOTA_OCX_HUB_URL")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
-        return (url, "env HERDR_AGENT_QUOTA_OCX_HUB_URL");
+        return Some((url, "env HERDR_AGENT_QUOTA_OCX_HUB_URL"));
     }
-    match read_pref_line("ocx-hub-url") {
-        Some(url) => (url, "config ocx-hub-url"),
-        None => ("https://ocx.example.com".to_string(), "default"),
-    }
+    read_pref_line("ocx-hub-url").map(|url| (url, "config ocx-hub-url"))
 }
 
 /// Inputs for `hub-check`, resolved from env/config by [`ocx_hub_check`] and
@@ -169,7 +169,7 @@ pub struct HubCheck<'a> {
     pub provider_id: &'a str,
     pub model_id: Option<&'a str>,
     pub omp_bin: OsString,
-    pub base_url: String,
+    pub base_url: Option<String>,
     pub url_source: &'a str,
     pub token: Option<String>,
     pub token_source: String,
@@ -184,7 +184,10 @@ pub fn ocx_hub_check(
     model_id: Option<&str>,
     now_unix: u64,
 ) -> (Vec<String>, bool) {
-    let (base_url, url_source) = ocx_hub_url();
+    let (base_url, url_source) = match ocx_hub_url() {
+        Some((url, source)) => (Some(url), source),
+        None => (None, "not set"),
+    };
     let (token, token_source) = ocx_hub_token();
     ocx_hub_check_with(HubCheck {
         provider_id,
@@ -260,9 +263,16 @@ pub fn ocx_hub_check_with(check: HubCheck<'_>) -> (Vec<String>, bool) {
     }
 
     // Leg 2: the hub itself.
+    let Some(base_url) = check.base_url else {
+        lines.push(
+            "hub url: not set; set HERDR_AGENT_QUOTA_OCX_HUB_URL or the ocx-hub-url config file (herdr plugin config-dir nordz0r.agent-quota); no request sent"
+                .to_string(),
+        );
+        return (lines, false);
+    };
     lines.push(format!(
         "hub url: {} ({})",
-        redact_url(&check.base_url),
+        redact_url(&base_url),
         check.url_source
     ));
     lines.push(format!(
@@ -279,7 +289,7 @@ pub fn ocx_hub_check_with(check: HubCheck<'_>) -> (Vec<String>, bool) {
     };
     let url = format!(
         "{}/api/provider-quotas",
-        check.base_url.trim_end_matches('/')
+        base_url.trim_end_matches('/')
     );
     let response = ureq::get(&url)
         .set("Authorization", &format!("Bearer {token}"))
@@ -1502,12 +1512,38 @@ mod tests {
             provider_id: "ocx",
             model_id: Some("openrouter/deepseek/deepseek-v3.2"),
             omp_bin: omp,
-            base_url,
+            base_url: Some(base_url),
             url_source: "test",
             token: token.map(str::to_string),
             token_source: "test".to_string(),
             now_unix: 0,
         })
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn hub_check_without_url_fails_and_sends_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty_omp = omp_stub(
+            dir.path(),
+            "echo '{\"reports\":[],\"accountsWithoutUsage\":[]}'",
+        );
+        let (lines, ok) = ocx_hub_check_with(HubCheck {
+            provider_id: "ocx",
+            model_id: None,
+            omp_bin: empty_omp,
+            base_url: None,
+            url_source: "not set",
+            token: Some(TOKEN.to_string()),
+            token_source: "test".to_string(),
+            now_unix: 0,
+        });
+        assert!(!ok, "{lines:?}");
+        assert!(lines.iter().any(|line| line.starts_with("hub url: not set")
+            && line.contains("HERDR_AGENT_QUOTA_OCX_HUB_URL")
+            && line.contains("no request sent")));
+        assert!(lines.iter().all(|line| !line.starts_with("GET ")));
+        assert!(!lines.join("\n").contains(TOKEN));
     }
 
     #[test]

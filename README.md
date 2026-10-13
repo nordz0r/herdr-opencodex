@@ -114,7 +114,7 @@ herdr plugin action invoke configure --plugin nordz0r.agent-quota
 
 | Файл / env | Значение |
 | --- | --- |
-| `ocx-hub-url` / `HERDR_AGENT_QUOTA_OCX_HUB_URL` | **Management**-адрес хаба (по умолчанию `https://ocx.example.com`, задайте свой). Там должен быть доступен `/api/*`; edge, который публикует только data plane, отвечает `403 Forbidden`. |
+| `ocx-hub-url` / `HERDR_AGENT_QUOTA_OCX_HUB_URL` | **Management**-адрес хаба (обязателен, дефолта нет: без него хаб не опрашивается и токен никуда не отправляется; `hub-check` выходит с кодом 1). Там должен быть доступен `/api/*`; edge, который публикует только data plane, отвечает `403 Forbidden`. |
 | `ocx-hub-admin-token-file` / `HERDR_AGENT_QUOTA_OCX_ADMIN_TOKEN` | Путь к файлу 0600 с admin-токеном хаба (по умолчанию `~/.opencodex/hub-admin-api-token`). Переменная окружения содержит сам токен; используйте её только для ручного запуска. |
 
 Проверка — `hub-check`: он проходит те же шаги, что и панель (`omp usage`, затем хаб), и никогда не печатает токен. Если шаг не прошёл, выходит с кодом 1:
