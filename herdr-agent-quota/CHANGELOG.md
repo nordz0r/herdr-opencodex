@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the OCX hub URL has no default any more. Set
+  `HERDR_AGENT_QUOTA_OCX_HUB_URL` or the `ocx-hub-url` config file before
+  updating. Without it the hub leg is skipped and the admin token is not sent
+  anywhere; `hub-check` exits 1 with `hub url: not set …`.
+
 ### Fixed
 
 - OCX panes on OpenRouter models (`ocx/openrouter/…`) no longer show

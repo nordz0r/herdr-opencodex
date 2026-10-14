@@ -1,0 +1,215 @@
+{
+ "schemaVersion": "0.2.0",
+ "kind": "graph",
+ "id": "herdr-opencodex-architecture",
+ "generatedAt": "2026-10-13T18:00:00.000Z",
+ "title": "herdr-opencodex plugins",
+ "summary": "ocx-stats reads usage from an OpenCodex origin or the local ocx CLI; agent-quota reads omp usage and falls back to the hub's provider quotas.",
+ "lenses": [
+  "architecture"
+ ],
+ "layout": {
+  "direction": "right",
+  "laneOrder": [
+   "herdr",
+   "plug",
+   "src"
+  ],
+  "rank": {
+   "popup": 0,
+   "sidebar": 2,
+   "stats": 0,
+   "quota": 2,
+   "ocx": 0,
+   "ocxcli": 1,
+   "omp": 2,
+   "hub": 3
+  }
+ },
+ "provenance": {
+  "repo": {
+   "owner": "nordz0r",
+   "name": "herdr-opencodex",
+   "host": "github.com"
+  },
+  "base": {
+   "sha": "0000000000000000000000000000000000000000",
+   "ref": "main"
+  },
+  "head": {
+   "sha": "0000000000000000000000000000000000000000",
+   "ref": "main"
+  },
+  "generator": {
+   "name": "manual",
+   "version": "1.0.0"
+  }
+ },
+ "lanes": [
+  {
+   "id": "herdr",
+   "label": "Herdr",
+   "subtitle": "panes and sidebar",
+   "order": 0
+  },
+  {
+   "id": "plug",
+   "label": "Plugins",
+   "subtitle": "this repo",
+   "order": 1
+  },
+  {
+   "id": "src",
+   "label": "Sources",
+   "subtitle": "usage and quotas",
+   "order": 2
+  }
+ ],
+ "nodes": [
+  {
+   "id": "popup",
+   "label": "Stats popup",
+   "kind": "ui",
+   "delta": "unchanged",
+   "lane": "herdr",
+   "subtitle": "tokens, list-price USD",
+   "files": [],
+   "badges": []
+  },
+  {
+   "id": "sidebar",
+   "label": "Agents sidebar",
+   "kind": "ui",
+   "delta": "unchanged",
+   "lane": "herdr",
+   "subtitle": "model, context, 5h/7d",
+   "files": [],
+   "badges": []
+  },
+  {
+   "id": "stats",
+   "label": "nordz0r.ocx-stats",
+   "kind": "app",
+   "delta": "unchanged",
+   "lane": "plug",
+   "subtitle": "bin/ocx-stats.mjs",
+   "files": [],
+   "badges": []
+  },
+  {
+   "id": "quota",
+   "label": "nordz0r.agent-quota",
+   "kind": "app",
+   "delta": "unchanged",
+   "lane": "plug",
+   "subtitle": "Rust, herdr-agent-quota/",
+   "files": [],
+   "badges": []
+  },
+  {
+   "id": "ocx",
+   "label": "OpenCodex origin",
+   "kind": "external",
+   "delta": "unchanged",
+   "lane": "src",
+   "subtitle": "GET /v1/usage, /api/logs",
+   "files": [],
+   "badges": []
+  },
+  {
+   "id": "ocxcli",
+   "label": "ocx CLI",
+   "kind": "external",
+   "delta": "unchanged",
+   "lane": "src",
+   "subtitle": "fallback: ocx usage --json",
+   "files": [],
+   "badges": []
+  },
+  {
+   "id": "omp",
+   "label": "omp usage --json",
+   "kind": "external",
+   "delta": "unchanged",
+   "lane": "src",
+   "subtitle": "per provider",
+   "files": [],
+   "badges": []
+  },
+  {
+   "id": "hub",
+   "label": "OCX hub",
+   "kind": "external",
+   "delta": "unchanged",
+   "lane": "src",
+   "subtitle": "GET /api/provider-quotas",
+   "files": [],
+   "badges": []
+  }
+ ],
+ "edges": [
+  {
+   "id": "e0",
+   "from": "stats",
+   "to": "popup",
+   "kind": "render",
+   "delta": "unchanged",
+   "emphasis": "normal",
+   "animated": true,
+   "files": []
+  },
+  {
+   "id": "e1",
+   "from": "quota",
+   "to": "sidebar",
+   "kind": "render",
+   "delta": "unchanged",
+   "emphasis": "normal",
+   "animated": true,
+   "files": []
+  },
+  {
+   "id": "e2",
+   "from": "stats",
+   "to": "ocx",
+   "kind": "http",
+   "delta": "unchanged",
+   "label": "baseUrl + apiKey",
+   "emphasis": "hero",
+   "animated": true,
+   "files": []
+  },
+  {
+   "id": "e3",
+   "from": "stats",
+   "to": "ocxcli",
+   "kind": "call",
+   "delta": "unchanged",
+   "emphasis": "muted",
+   "animated": false,
+   "files": []
+  },
+  {
+   "id": "e4",
+   "from": "quota",
+   "to": "omp",
+   "kind": "call",
+   "delta": "unchanged",
+   "emphasis": "hero",
+   "animated": true,
+   "files": []
+  },
+  {
+   "id": "e5",
+   "from": "quota",
+   "to": "hub",
+   "kind": "http",
+   "delta": "unchanged",
+   "label": "admin token, if URL set",
+   "emphasis": "normal",
+   "animated": true,
+   "files": []
+  }
+ ],
+ "flows": []
+}
