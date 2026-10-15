@@ -64,9 +64,13 @@ herdr plugin link "$(pwd)/herdr-agent-quota"
 Установи плагины Herdr из репозитория nordz0r/herdr-opencodex, строго по его README.
 
 Правила:
-- Ключи и токены не выдумывай, не печатай в вывод и не коммить. Спрашивай их у меня
-  и записывай сразу в файл (права 0600). Плейсхолдеры: <OCX_BASE_URL>, <OCX_API_KEY>,
-  <HUB_MANAGEMENT_URL>, <HUB_ADMIN_TOKEN>.
+- Секреты (apiKey OpenCodex, admin-токен хаба) не проси прислать в чат, не выдумывай,
+  не читай в вывод (никаких cat/echo содержимого) и не коммить. Дай мне команду, я сам
+  создам файл; ты только проверяешь, что файл есть и у него права 0600
+  (`test -s <файл> && stat -c %a <файл>`, на macOS `stat -f %Lp <файл>`).
+  Несекретные значения (<OCX_BASE_URL>, <HUB_MANAGEMENT_URL>) спрашивай в чате.
+- Файлы с секретами создаются сразу с правами 0600 (`umask 077` или
+  `install -m 600 /dev/null <файл>` до записи), а не chmod после.
 - Перед установкой покажи мне herdr-plugin.toml (корень и herdr-agent-quota/) и дождись «да»:
   плагины работают от моего пользователя.
 - Если какой-то шаг падает — остановись и покажи ошибку, не обходи её.
@@ -83,25 +87,34 @@ herdr plugin link "$(pwd)/herdr-agent-quota"
    herdr plugin install nordz0r/herdr-opencodex --yes
    herdr plugin install nordz0r/herdr-opencodex/herdr-agent-quota --yes
    herdr plugin list
-4. ocx-stats. Спроси: удалённый OpenCodex (нужны <OCX_BASE_URL> и <OCX_API_KEY>:
-   ocx_data_* для токенов, admin/management-ключ для логов) или локальный `ocx` из PATH.
-   Для удалённого создай "$(herdr plugin config-dir nordz0r.ocx-stats)/config.json"
-   по образцу config.example.json:
-   {"baseUrl": "<OCX_BASE_URL>", "apiKey": "<OCX_API_KEY>", "range": "1d", "logLimit": 8}
-   (baseUrl без слэша в конце), chmod 600.
+   Для agent-quota затем (строки боковой панели + startup, как в «Обновление, настройка, проверка»):
+   herdr plugin action invoke configure --plugin nordz0r.agent-quota
+4. ocx-stats. Спроси: удалённый OpenCodex (нужны <OCX_BASE_URL> и ключ: ocx_data_* для
+   токенов, admin/management-ключ для логов) или локальный `ocx` из PATH (тогда конфиг не нужен).
+   Для удалённого:
+   - CFG="$(herdr plugin config-dir nordz0r.ocx-stats)"; mkdir -p "$CFG"
+   - дай мне команду, которую я выполню сам (ключ не попадает ни в чат, ни в историю shell):
+     ( umask 077; read -rs -p 'OpenCodex apiKey: ' K; echo
+       printf '{"baseUrl":"%s","apiKey":"%s","range":"1d","logLimit":8}\n' '<OCX_BASE_URL>' "$K" > "$CFG/config.json" )
+     (baseUrl без слэша в конце, формат — как в config.example.json)
+   - проверь только наличие и права: test -s "$CFG/config.json" && stat -c %a "$CFG/config.json"  # 600
 5. agent-quota с остатком хаба (только если мне это нужно — спроси):
-   - admin-токен хаба <HUB_ADMIN_TOKEN> (с хоста хаба, не клиентский
-     ~/.opencodex/admin-api-token) запиши в ~/.opencodex/hub-admin-api-token, chmod 600;
-   - CFG="$(herdr plugin config-dir nordz0r.agent-quota)"
+   - admin-токен хаба берётся с хоста хаба (не клиентский ~/.opencodex/admin-api-token).
+     Дай мне команду, которую я выполню сам:
+     mkdir -p ~/.opencodex && install -m 600 /dev/null ~/.opencodex/hub-admin-api-token
+     ( read -rs -p 'Hub admin token: ' T; echo; printf '%s\n' "$T" > ~/.opencodex/hub-admin-api-token )
+     затем проверь: test -s ~/.opencodex/hub-admin-api-token && stat -c %a ~/.opencodex/hub-admin-api-token  # 600
+   - CFG="$(herdr plugin config-dir nordz0r.agent-quota)"; mkdir -p "$CFG"
      printf '%s\n' '<HUB_MANAGEMENT_URL>' > "$CFG/ocx-hub-url"
      printf '%s\n' "$HOME/.opencodex/hub-admin-api-token" > "$CFG/ocx-hub-admin-token-file"
-     herdr plugin action invoke configure --plugin nordz0r.agent-quota
+     herdr plugin action invoke nordz0r.agent-quota.refresh
    На Windows конфиг Herdr — %APPDATA%\herdr\config.toml.
 6. Проверка успеха:
    - `herdr plugin list` показывает установленные плагины; второго quota-плагина
      (например herdr-agent-usage) быть не должно;
-   - ocx-stats: в каталоге плагина выполни
-     HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir nordz0r.ocx-stats)" node bin/ocx-stats.mjs doctor
+   - ocx-stats: каталог плагина — поле plugin_root в `herdr plugin list --json`:
+     SROOT="$(herdr plugin list --json | jq -r '.. | objects | select(.plugin_id? == "nordz0r.ocx-stats") | .plugin_root')"
+     cd "$SROOT" && HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir nordz0r.ocx-stats)" node bin/ocx-stats.mjs doctor
    - agent-quota:
      ROOT="$(herdr plugin list --json | jq -r '.. | objects | select(.plugin_id? == "nordz0r.agent-quota") | .plugin_root')"
      HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir nordz0r.agent-quota)" \
