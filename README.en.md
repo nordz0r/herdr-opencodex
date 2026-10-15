@@ -56,6 +56,61 @@ herdr plugin link "$(pwd)/herdr-agent-quota"
 
 Requires Node.js on `PATH` for stats. Quota plugin needs the Rust toolchain in `herdr-agent-quota/rust-toolchain.toml` (Herdr runs `cargo build --release` on GitHub install).
 
+## Automated install via an agent
+
+You can hand the installation to a coding agent (Claude Code, Codex, Cursor, OpenCode, etc.): paste the prompt below into its chat. The steps mirror the manual instructions in "Installation" and "Usage". Secrets in the prompt are placeholders only: the agent must ask you for them, write them to a 0600 file, and never print them.
+
+```text
+Install the Herdr plugins from nordz0r/herdr-opencodex, strictly following its README.
+
+Rules:
+- Do not invent, print, or commit keys/tokens. Ask me for them and write them straight
+  to a file (mode 0600). Placeholders: <OCX_BASE_URL>, <OCX_API_KEY>,
+  <HUB_MANAGEMENT_URL>, <HUB_ADMIN_TOKEN>.
+- Before installing, show me herdr-plugin.toml (root and herdr-agent-quota/) and wait for
+  my "yes": the plugins run as my user.
+- If a step fails, stop and show the error; do not work around it.
+
+1. Check dependencies:
+   - `herdr --version` (ocx-stats needs Herdr >= 0.7.0, agent-quota >= 0.9.0);
+   - `node --version` (needed by nordz0r.ocx-stats);
+   - `cargo --version` / `rustup` (agent-quota builds with `cargo build --release`,
+     toolchain 1.95.0 from herdr-agent-quota/rust-toolchain.toml);
+   - `jq` (used by the verification command below).
+   Report anything missing and ask whether to install it.
+2. Ask which plugins to install: nordz0r.ocx-stats, nordz0r.agent-quota, or both.
+3. Install:
+   herdr plugin install nordz0r/herdr-opencodex --yes
+   herdr plugin install nordz0r/herdr-opencodex/herdr-agent-quota --yes
+   herdr plugin list
+4. ocx-stats. Ask: remote OpenCodex (needs <OCX_BASE_URL> and <OCX_API_KEY>:
+   ocx_data_* for tokens, admin/management key for logs) or local `ocx` on PATH.
+   For remote, create "$(herdr plugin config-dir nordz0r.ocx-stats)/config.json"
+   following config.example.json:
+   {"baseUrl": "<OCX_BASE_URL>", "apiKey": "<OCX_API_KEY>", "range": "1d", "logLimit": 8}
+   (no trailing slash in baseUrl), chmod 600.
+5. agent-quota with hub remaining (only if I need it — ask):
+   - write the hub admin token <HUB_ADMIN_TOKEN> (from the hub host, not the client's
+     ~/.opencodex/admin-api-token) to ~/.opencodex/hub-admin-api-token, chmod 600;
+   - CFG="$(herdr plugin config-dir nordz0r.agent-quota)"
+     printf '%s\n' '<HUB_MANAGEMENT_URL>' > "$CFG/ocx-hub-url"
+     printf '%s\n' "$HOME/.opencodex/hub-admin-api-token" > "$CFG/ocx-hub-admin-token-file"
+     herdr plugin action invoke configure --plugin nordz0r.agent-quota
+   On Windows the Herdr config is %APPDATA%\herdr\config.toml.
+6. Verify:
+   - `herdr plugin list` shows the installed plugins; there must be no second quota
+     plugin (e.g. herdr-agent-usage);
+   - ocx-stats: from the plugin directory run
+     HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir nordz0r.ocx-stats)" node bin/ocx-stats.mjs doctor
+   - agent-quota:
+     ROOT="$(herdr plugin list --json | jq -r '.. | objects | select(.plugin_id? == "nordz0r.agent-quota") | .plugin_root')"
+     HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir nordz0r.agent-quota)" \
+       "$ROOT/target/release/herdr-agent-quota" hub-check --provider ocx --model <PANE_MODEL>
+     (exit code 0; the last line is what the pane will render)
+     herdr plugin log list --plugin nordz0r.agent-quota --limit 5
+7. Report: what was installed, where configs live, verification results. Never print key values.
+```
+
 ## Usage
 
 ### OpenCodex Stats (`nordz0r.ocx-stats`)
